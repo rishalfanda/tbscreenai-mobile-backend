@@ -1,16 +1,38 @@
 from datetime import date
 
-from sqlalchemy import Date, Integer, String, UniqueConstraint
+from sqlalchemy import Date, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, TenantMixin, TimestampMixin, UuidPkMixin
+from app.models.base import (
+    Base,
+    SoftDeleteMixin,
+    TenantMixin,
+    TimestampMixin,
+    UuidPkMixin,
+    VersionedMixin,
+)
 
 
-class Patient(Base, UuidPkMixin, TimestampMixin, TenantMixin):
+class Patient(
+    Base, UuidPkMixin, TimestampMixin, TenantMixin, VersionedMixin, SoftDeleteMixin
+):
     __tablename__ = "patients"
-    # Patient code (TB000001, ...) is unique per hospital, not globally.
-    __table_args__ = (UniqueConstraint("tenant_id", "code", name="uq_patient_tenant_code"),)
+    # Patient code (TB000001, ...) is unique per hospital, not globally — and
+    # only among live rows, so a code becomes reusable once the record is
+    # soft-deleted. A plain UNIQUE constraint would keep blocking it forever.
+    __table_args__ = (
+        Index(
+            "uq_patient_tenant_code",
+            "tenant_id",
+            "code",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # /sync/pull filters on updated_at — without this it is a sequential scan.
+        Index("ix_patients_updated_at", "updated_at"),
+    )
 
     code: Mapped[str] = mapped_column(String(20), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)

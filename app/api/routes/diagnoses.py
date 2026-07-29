@@ -109,12 +109,13 @@ def update_status(
     tenant_id: CurrentTenant,
     _user: CurrentUser,
 ) -> Diagnosis:
-    """Doctor validation verdict — mirrors the Flutter ValidationScreen flow."""
-    if body.status == "disagreed" and not (body.doctor_note or "").strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="A clinical note is required when disagreeing",
-        )
+    """Doctor validation verdict — mirrors the Flutter ValidationScreen flow.
+
+    The "disagreeing requires a clinical note" rule lives on
+    DiagnosisStatusUpdate rather than here, so the offline sync path is held to
+    it too. FastAPI turns the schema's rejection into the same 422 this handler
+    used to raise by hand.
+    """
     diagnosis = _get_owned_diagnosis(db, tenant_id, diagnosis_id)
     diagnosis.status = body.status
     diagnosis.doctor_note = body.doctor_note

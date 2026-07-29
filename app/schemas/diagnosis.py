@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Findings(BaseModel):
@@ -26,8 +26,24 @@ class DiagnosisCreate(BaseModel):
 
 
 class DiagnosisStatusUpdate(BaseModel):
+    """The doctor's verdict — the ONLY part of a diagnosis a client may change.
+
+    Both write paths validate through this schema: the REST endpoint and the
+    offline sync push. That is deliberate. The rules used to live in the REST
+    handler only, so a tablet syncing offline work could store an arbitrary
+    status, or record a disagreement with no clinical note — bypassing the
+    exact safeguard the endpoint enforced.
+    """
+
     status: str = Field(pattern="^(pending|agreed|disagreed)$")
     doctor_note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _disagreement_needs_a_reason(self) -> "DiagnosisStatusUpdate":
+        # Overruling the AI without stating why leaves no clinical audit trail.
+        if self.status == "disagreed" and not (self.doctor_note or "").strip():
+            raise ValueError("A clinical note is required when disagreeing")
+        return self
 
 
 class DiagnosisOut(BaseModel):
@@ -46,6 +62,8 @@ class DiagnosisOut(BaseModel):
     diagnosed_at: datetime
     created_at: datetime
     updated_at: datetime
+    # Echo this back as `base_version` when pushing an edit — see SyncPushItem.
+    version: int
 
     model_config = {"from_attributes": True}
 

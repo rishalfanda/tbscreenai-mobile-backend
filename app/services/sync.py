@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.models.diagnosis import Diagnosis
 from app.models.patient import Patient
 from app.models.sync_log import SyncLog
-from app.schemas.diagnosis import DiagnosisCreate
+from app.schemas.diagnosis import DiagnosisCreate, DiagnosisStatusUpdate
 from app.schemas.patient import PatientCreate, PatientUpdate
 from app.schemas.sync import SyncPushItem, SyncPushResult
 
@@ -31,9 +31,35 @@ def _as_utc(dt: datetime) -> datetime:
     Postgres returns tz-aware datetimes; a naive one can still arrive (e.g. a
     backend on SQLite, or a client omitting the offset). Treat naive as UTC so
     conflict detection never crashes on a mixed comparison.
+
+    The second-level truncation is NOT cosmetic: the tablet caches server
+    timestamps through drift, which stores DateTime as unix seconds, so a
+    client's base_updated_at genuinely carries no sub-second information.
+    Comparing at full precision would flag a conflict on every tablet edit.
+    That is also precisely why this path cannot detect a real same-second
+    conflict — which is what base_version is for. See _has_conflict.
     """
     aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
     return aware.replace(microsecond=0)
+
+
+def _has_conflict(row, item: SyncPushItem) -> bool:
+    """Has the server row moved on since the client last read it?
+
+    Version first: an integer the server bumps on every UPDATE, compared
+    exactly. If the client sent one and it differs, somebody wrote in between.
+    No precision caveats, no clock skew.
+
+    Timestamps are the fallback for clients that do not send a version yet.
+    That path is second-granular and so CANNOT separate two edits landing in
+    the same second — it lets the later write win, silently. Medical data
+    deserves better, which is the whole reason base_version exists.
+    """
+    if item.base_version is not None:
+        return row.version != item.base_version
+    if item.base_updated_at is not None:
+        return _as_utc(row.updated_at) > _as_utc(item.base_updated_at)
+    return False
 
 
 def _already_seen(db: Session, tenant_id: UUID, op_id: UUID) -> SyncLog | None:
@@ -90,11 +116,13 @@ def apply_push_item(
     if item.operation == "update":
         if item.entity_id is None:
             raise ValueError("entity_id is required for update ops")
-        row = db.scalar(
-            select(model).where(
-                model.id == item.entity_id, model.tenant_id == tenant_id
-            )
+        stmt = select(model).where(
+            model.id == item.entity_id, model.tenant_id == tenant_id
         )
+        if hasattr(model, "deleted_at"):
+            # A soft-deleted record is gone as far as clients are concerned.
+            stmt = stmt.where(model.deleted_at.is_(None))
+        row = db.scalar(stmt)
         if row is None:
             _log(db, tenant_id=tenant_id, item=item, device_id=device_id,
                  status="conflict", entity_id=item.entity_id)
@@ -105,10 +133,7 @@ def apply_push_item(
                 entity_id=item.entity_id,
                 detail="Entity not found on server",
             )
-        if (
-            item.base_updated_at is not None
-            and _as_utc(row.updated_at) > _as_utc(item.base_updated_at)
-        ):
+        if _has_conflict(row, item):
             _log(db, tenant_id=tenant_id, item=item, device_id=device_id,
                  status="conflict", entity_id=row.id)
             db.commit()
@@ -119,15 +144,18 @@ def apply_push_item(
                 detail="Server version is newer — manual review required",
             )
 
+        # Both write paths validate through the same schemas. Skipping them
+        # here once let a tablet store arbitrary diagnosis statuses and record
+        # disagreements with no clinical note — the REST endpoint rejects both.
         if item.entity_type == "patient":
             fields = PatientUpdate.model_validate(item.payload).model_dump(
                 exclude_unset=True
             )
         else:
-            # For diagnoses only the validation verdict is client-mutable.
-            allowed = {k: v for k, v in item.payload.items()
-                       if k in ("status", "doctor_note")}
-            fields = allowed
+            # Only the doctor's verdict is client-mutable on a diagnosis;
+            # DiagnosisStatusUpdate carries no other field, so anything else
+            # in the payload is ignored rather than trusted.
+            fields = DiagnosisStatusUpdate.model_validate(item.payload).model_dump()
         for key, value in fields.items():
             setattr(row, key, value)
         _log(db, tenant_id=tenant_id, item=item, device_id=device_id,

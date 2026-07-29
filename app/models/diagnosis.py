@@ -1,19 +1,37 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    Uuid,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, TenantMixin, TimestampMixin, UuidPkMixin
+from app.models.base import (
+    Base,
+    TenantMixin,
+    TimestampMixin,
+    UuidPkMixin,
+    VersionedMixin,
+)
 
 # Validation status values (kept in sync with the Flutter app):
 #   pending | agreed | disagreed
 DIAGNOSIS_STATUSES = ("pending", "agreed", "disagreed")
 
 
-class Diagnosis(Base, UuidPkMixin, TimestampMixin, TenantMixin):
+class Diagnosis(Base, UuidPkMixin, TimestampMixin, TenantMixin, VersionedMixin):
     __tablename__ = "diagnoses"
+    # /sync/pull filters on updated_at — without this it is a sequential scan.
+    __table_args__ = (Index("ix_diagnoses_updated_at", "updated_at"),)
 
     patient_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("patients.id"), index=True, nullable=False

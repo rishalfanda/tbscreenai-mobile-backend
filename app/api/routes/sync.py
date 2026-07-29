@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.api.deps import CurrentTenant, CurrentUser, DbSession
 from app.models.diagnosis import Diagnosis
@@ -24,14 +26,24 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 def push(
     body: SyncPushRequest, db: DbSession, tenant_id: CurrentTenant, user: CurrentUser
 ) -> SyncPushResponse:
-    """Apply offline changes from the tablet. Idempotent per client_op_id."""
+    """Apply offline changes from the tablet. Idempotent per client_op_id.
+
+    One bad item must never sink the batch. Every op is isolated: a rejection
+    becomes that op's own `conflict` verdict and the rest still run. Without
+    this the request 500s and the client loses the verdicts for ops the server
+    already committed — it cannot tell which of its offline work landed.
+    """
     results: list[SyncPushResult] = []
     for item in body.items:
         try:
             results.append(
                 apply_push_item(db, tenant_id, user.id, body.device_id, item)
             )
-        except (ValidationError, ValueError) as exc:
+        except (ValidationError, ValueError, IntegrityError, StaleDataError) as exc:
+            # IntegrityError: duplicate client-assigned id, or a patient code
+            # already taken in this hospital. StaleDataError: another writer
+            # won the race on the version counter. Both mean "this op cannot
+            # be applied as-is" — a conflict for a human to look at, not a 500.
             db.rollback()
             results.append(
                 SyncPushResult(
@@ -52,12 +64,20 @@ def pull(
     since: datetime | None = None,
 ) -> SyncPullResponse:
     """Server changes for this hospital since `since` (full snapshot if omitted),
-    plus the latest AI model version."""
+    plus the latest AI model version.
+
+    Soft-deleted patients are handled differently per mode, on purpose:
+    a full snapshot omits them (the client rebuilds its cache from what it
+    receives), while a delta includes them as tombstones — `deleted_at` set —
+    because that is the only way the tablet learns to drop a row it already has.
+    """
     patients_stmt = select(Patient).where(Patient.tenant_id == tenant_id)
     diagnoses_stmt = select(Diagnosis).where(Diagnosis.tenant_id == tenant_id)
     if since is not None:
         patients_stmt = patients_stmt.where(Patient.updated_at > since)
         diagnoses_stmt = diagnoses_stmt.where(Diagnosis.updated_at > since)
+    else:
+        patients_stmt = patients_stmt.where(Patient.deleted_at.is_(None))
 
     latest_model = db.scalar(
         select(ModelVersion).where(ModelVersion.is_latest.is_(True))

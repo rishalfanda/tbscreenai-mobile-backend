@@ -10,6 +10,7 @@ import os
 import uuid
 from collections.abc import Generator
 
+import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -19,6 +20,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-at-least-32-characters")
+
+# bcrypt's real cost (12 rounds) is the point in production and a waste here:
+# the fixtures hash five passwords per test plus a login per auth header, which
+# dominated the runtime. 4 rounds is the library minimum and exercises the same
+# code path. Production cost is untouched — this only rebinds the test process.
+_real_gensalt = bcrypt.gensalt
+bcrypt.gensalt = lambda rounds=4, prefix=b"2b": _real_gensalt(4, prefix)  # type: ignore[assignment]
 
 from app.core.database import get_db  # noqa: E402
 from app.core.security import hash_password  # noqa: E402

@@ -37,5 +37,11 @@ class PatientOut(PatientBase):
     tenant_id: UUID
     created_at: datetime
     updated_at: datetime
+    # Echo this back as `base_version` when pushing an edit — see SyncPushItem.
+    version: int
+    # Non-null means the record was soft-deleted. Live reads never return
+    # these; a delta /sync/pull does, as a tombstone so the tablet can drop
+    # its cached copy.
+    deleted_at: datetime | None = None
 
     model_config = {"from_attributes": True}

@@ -1,8 +1,8 @@
 # Testing — TBScreenAI
 
-Ringkasan cakupan uji per 2026-07-24 (FASE 5). Semua test hijau.
+Ringkasan cakupan uji per 2026-07-29. Semua test hijau.
 
-## Backend (pytest) — 50 test
+## Backend (pytest) — 68 test (~2 detik)
 
 ```bash
 cd C:/Users/devel/tbscreenai-backend
@@ -12,12 +12,17 @@ cd C:/Users/devel/tbscreenai-backend
 Berjalan di SQLite in-memory per-test (tidak menyentuh Postgres dev, tidak butuh
 Docker). Type Postgres-spesifik (`JSONB`) di-compile ke `JSON` untuk SQLite.
 
+Suite dulu makan 89 detik; `conftest.py` kini menurunkan cost bcrypt ke 4 rounds
+**khusus proses test** (fixture-nya hash 5 password per test plus login per header).
+Cost produksi tidak tersentuh.
+
 | File | Cakupan |
 |---|---|
 | `test_tenant_isolation.py` | RS lain tidak bisa read/list/update/delete pasien (404, bukan 403); kode pasien sama boleh di RS berbeda; diagnosis lintas-tenant ditolak; pull hanya data sendiri; super_admin wajib `X-Tenant-Id`; **doctor tidak bisa ganti tenant lewat header** (scope dari JWT) |
 | `test_sync.py` | Idempotency (op id sama → applied lalu skipped; retry 5× tetap 1 record; op id per-tenant; batch campur baru+lama); konflik (base_updated_at basi → conflict, data tidak ditimpa; entity tak dikenal → conflict bukan crash; base terkini → applied); pull (server_time, delta `since`) |
 | `test_auth.py` | Login benar/salah; email tak dikenal = pesan sama dengan password salah (anti-enumeration); akun nonaktif ditolak; refresh token; access token ≠ refresh token; tanda tangan dipalsukan ditolak; semua endpoint wajib auth |
 | `test_patients_diagnoses.py` | CRUD pasien; kode dobel 409; search nama+kode; validasi field (gender/age); **tenant_id di body diabaikan**; diagnosis CRUD; disagree wajib catatan; filter; inference mock (is_mock=true, tolak content-type non-gambar) |
+| `test_data_integrity.py` | Regresi 4 cacat integritas data (lihat `docs/ARCHITECTURE_REVIEW.md`): sync menolak status diagnosis sembarang & disagree tanpa catatan, dan tidak bisa menyentuh field selain verdict; konflik terdeteksi lewat `version` walau dua edit di detik yang sama; soft delete pasien (diagnosis selamat, kode bisa dipakai ulang, tombstone di delta pull); satu item batch rusak tidak menjatuhkan item lain |
 
 **Bug asli yang ditemukan pytest:** perbandingan `datetime` naive vs aware di
 deteksi konflik sync (`app/services/sync.py`) → crash saat base_updated_at dari

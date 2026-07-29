@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -11,10 +12,15 @@ router = APIRouter(prefix="/patients", tags=["patients"])
 
 
 def _get_owned_patient(db, tenant_id: UUID, patient_id: UUID) -> Patient:
-    """Fetch by id AND tenant. A patient of another hospital yields the same
-    404 as a nonexistent id — no cross-tenant probing."""
+    """Fetch by id AND tenant, live rows only. A patient of another hospital —
+    or one that was soft-deleted — yields the same 404 as a nonexistent id, so
+    there is nothing to probe for."""
     patient = db.scalar(
-        select(Patient).where(Patient.id == patient_id, Patient.tenant_id == tenant_id)
+        select(Patient).where(
+            Patient.id == patient_id,
+            Patient.tenant_id == tenant_id,
+            Patient.deleted_at.is_(None),
+        )
     )
     if patient is None:
         raise HTTPException(
@@ -32,7 +38,9 @@ def list_patients(
     limit: int = 100,
     offset: int = 0,
 ) -> list[Patient]:
-    stmt = select(Patient).where(Patient.tenant_id == tenant_id)
+    stmt = select(Patient).where(
+        Patient.tenant_id == tenant_id, Patient.deleted_at.is_(None)
+    )
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(or_(Patient.name.ilike(pattern), Patient.code.ilike(pattern)))
@@ -45,7 +53,12 @@ def create_patient(
     body: PatientCreate, db: DbSession, tenant_id: CurrentTenant, _user: CurrentUser
 ) -> Patient:
     exists = db.scalar(
-        select(Patient).where(Patient.tenant_id == tenant_id, Patient.code == body.code)
+        select(Patient).where(
+            Patient.tenant_id == tenant_id,
+            Patient.code == body.code,
+            # A soft-deleted record does not keep its code reserved.
+            Patient.deleted_at.is_(None),
+        )
     )
     if exists:
         raise HTTPException(
@@ -86,6 +99,12 @@ def update_patient(
 def delete_patient(
     patient_id: UUID, db: DbSession, tenant_id: CurrentTenant, _user: CurrentUser
 ) -> None:
+    """Soft delete — the record stops being visible but is never destroyed.
+
+    Clinical data has retention obligations, and the diagnoses referencing this
+    patient must keep resolving. A hard DELETE violated that foreign key and
+    surfaced as a 500 for any patient who had ever been screened.
+    """
     patient = _get_owned_patient(db, tenant_id, patient_id)
-    db.delete(patient)
+    patient.deleted_at = datetime.now(timezone.utc)
     db.commit()

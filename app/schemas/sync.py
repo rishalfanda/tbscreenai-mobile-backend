@@ -15,7 +15,12 @@ class SyncPushItem(BaseModel):
     entity_type: Literal["patient", "diagnosis"]
     operation: Literal["create", "update"]
     entity_id: UUID | None = None
-    # Server-side updated_at the client last saw — used for conflict detection.
+    # Row version the client edited. PREFERRED conflict signal — an exact
+    # integer comparison, with no precision to lose.
+    base_version: int | None = None
+    # Legacy conflict signal, kept working for clients that predate
+    # `base_version`. Only second-accurate (drift caches DateTime as unix
+    # seconds), so same-second edits are indistinguishable. Prefer base_version.
     base_updated_at: datetime | None = None
     payload: dict
 
