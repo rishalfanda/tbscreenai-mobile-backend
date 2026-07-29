@@ -1,0 +1,153 @@
+"""Shared pytest fixtures.
+
+Every test runs against its own SQLite database so the suite never touches the
+dev Postgres data and can run without Docker. The models use portable types
+(Uuid, JSONB→JSON fallback) so this stays representative for the logic under
+test; anything Postgres-specific is exercised by the migration itself.
+"""
+
+import os
+import uuid
+from collections.abc import Generator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-at-least-32-characters")
+
+from app.core.database import get_db  # noqa: E402
+from app.core.security import hash_password  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import Base, Hospital, User  # noqa: E402
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):
+    """SQLite has no JSONB — store the same payload as TEXT/JSON."""
+    return "JSON"
+
+
+@pytest.fixture
+def db_session() -> Generator[Session, None, None]:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    session = TestingSession()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(engine)
+
+
+@pytest.fixture
+def client(db_session: Session) -> Generator[TestClient, None, None]:
+    def _override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def hospitals(db_session: Session) -> dict[str, Hospital]:
+    """Two tenants — the whole point is proving they cannot see each other."""
+    rows = {
+        "A": Hospital(name="RS Alpha", code="RSA"),
+        "B": Hospital(name="RS Beta", code="RSB"),
+    }
+    for hospital in rows.values():
+        db_session.add(hospital)
+    db_session.commit()
+    return rows
+
+
+@pytest.fixture
+def users(db_session: Session, hospitals: dict[str, Hospital]) -> dict[str, User]:
+    rows = {
+        "doctor_a": User(
+            email="doctor.a@rs.co.id",
+            full_name="Dr. A",
+            role="doctor",
+            tenant_id=hospitals["A"].id,
+            hashed_password=hash_password("secret123"),
+        ),
+        "doctor_b": User(
+            email="doctor.b@rs.co.id",
+            full_name="Dr. B",
+            role="doctor",
+            tenant_id=hospitals["B"].id,
+            hashed_password=hash_password("secret123"),
+        ),
+        "admin_a": User(
+            email="admin.a@rs.co.id",
+            full_name="Admin A",
+            role="admin_rs",
+            tenant_id=hospitals["A"].id,
+            hashed_password=hash_password("secret123"),
+        ),
+        "super": User(
+            email="super@tbscreen.co.id",
+            full_name="Super Admin",
+            role="super_admin",
+            tenant_id=None,
+            hashed_password=hash_password("secret123"),
+        ),
+        "disabled": User(
+            email="disabled@rs.co.id",
+            full_name="Nonaktif",
+            role="doctor",
+            tenant_id=hospitals["A"].id,
+            hashed_password=hash_password("secret123"),
+            is_active=False,
+        ),
+    }
+    for user in rows.values():
+        db_session.add(user)
+    db_session.commit()
+    return rows
+
+
+def auth_headers(client: TestClient, email: str, password: str = "secret123") -> dict:
+    response = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+@pytest.fixture
+def headers_a(client: TestClient, users) -> dict:
+    return auth_headers(client, "doctor.a@rs.co.id")
+
+
+@pytest.fixture
+def headers_b(client: TestClient, users) -> dict:
+    return auth_headers(client, "doctor.b@rs.co.id")
+
+
+@pytest.fixture
+def headers_super(client: TestClient, users) -> dict:
+    return auth_headers(client, "super@tbscreen.co.id")
+
+
+def make_patient_body(code: str | None = None) -> dict:
+    return {
+        "code": code or f"TB{uuid.uuid4().hex[:6].upper()}",
+        "name": "Pasien Uji",
+        "age": 40,
+        "gender": "Male",
+        "status": "Suspected",
+        "history": ["entri uji"],
+    }
