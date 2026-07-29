@@ -34,7 +34,7 @@ def _diagnosis(client, headers, patient_id, **overrides):
 
 
 class TestPatientCrud:
-    def test_create_read_update_delete(self, client, headers_a):
+    def test_create_read_update_delete(self, client, headers_a, headers_admin_a):
         created = _patient(client, headers_a, "TB001000")
         assert created["code"] == "TB001000"
 
@@ -50,7 +50,10 @@ class TestPatientCrud:
         # Untouched fields survive a partial update.
         assert updated.json()["name"] == "Pasien Uji"
 
-        deleted = client.delete(f"/api/v1/patients/{created['id']}", headers=headers_a)
+        # Deletion is an admin_rs verb — see the access matrix in app/api/deps.py.
+        deleted = client.delete(
+            f"/api/v1/patients/{created['id']}", headers=headers_admin_a
+        )
         assert deleted.status_code == 204
         assert (
             client.get(f"/api/v1/patients/{created['id']}", headers=headers_a).status_code

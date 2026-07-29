@@ -1,12 +1,19 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.api.deps import CurrentTenant, CurrentUser, DbSession
+from app.api.deps import (
+    CLINICAL_ROLES,
+    READ_ROLES,
+    CurrentTenant,
+    CurrentUser,
+    DbSession,
+    require_roles,
+)
 from app.models.diagnosis import Diagnosis
 from app.models.model_version import ModelVersion
 from app.models.patient import Patient
@@ -22,7 +29,11 @@ from app.services.sync import apply_push_item
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
-@router.post("/push", response_model=SyncPushResponse)
+@router.post(
+    "/push",
+    response_model=SyncPushResponse,
+    dependencies=[Depends(require_roles(*CLINICAL_ROLES))],
+)
 def push(
     body: SyncPushRequest, db: DbSession, tenant_id: CurrentTenant, user: CurrentUser
 ) -> SyncPushResponse:
@@ -56,7 +67,11 @@ def push(
     return SyncPushResponse(results=results)
 
 
-@router.get("/pull", response_model=SyncPullResponse)
+@router.get(
+    "/pull",
+    response_model=SyncPullResponse,
+    dependencies=[Depends(require_roles(*CLINICAL_ROLES))],
+)
 def pull(
     db: DbSession,
     tenant_id: CurrentTenant,
@@ -93,7 +108,11 @@ def pull(
     )
 
 
-@router.get("/model-version", response_model=ModelVersionOut | None)
+@router.get(
+    "/model-version",
+    response_model=ModelVersionOut | None,
+    dependencies=[Depends(require_roles(*READ_ROLES))],
+)
 def latest_model_version(db: DbSession, _user: CurrentUser) -> ModelVersionOut | None:
     """Latest AI model release — powers the ModelUpdateCard check."""
     latest = db.scalar(select(ModelVersion).where(ModelVersion.is_latest.is_(True)))

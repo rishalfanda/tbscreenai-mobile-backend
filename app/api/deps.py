@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import decode_token
-from app.models.user import ROLE_SUPER_ADMIN, User
+from app.models.user import ROLE_ADMIN_RS, ROLE_DOCTOR, ROLE_SUPER_ADMIN, User
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -63,7 +63,12 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def require_roles(*roles: str) -> Callable[[User], User]:
-    """Route guard: `dependencies=[Depends(require_roles("doctor", "admin_rs"))]`."""
+    """Route guard: `dependencies=[Depends(require_roles(ROLE_DOCTOR))]`.
+
+    Authorisation is separate from tenant scoping. `get_tenant_id` answers
+    "whose data?"; this answers "may you do this at all?". A doctor and a
+    hospital admin see the same rows and are allowed different verbs on them.
+    """
 
     def _checker(user: CurrentUser) -> User:
         if user.role not in roles:
@@ -74,6 +79,41 @@ def require_roles(*roles: str) -> Callable[[User], User]:
         return user
 
     return _checker
+
+
+# --- Access matrix --------------------------------------------------------
+#
+#                           doctor  admin_rs  super_admin
+#   GET    /patients          x        x          x
+#   POST   /patients          x        x          -
+#   PUT    /patients/{id}     x        x          -
+#   DELETE /patients/{id}     -        x          x
+#   POST   /diagnoses/infer   x        -          -
+#   POST   /diagnoses         x        -          -
+#   GET    /diagnoses         x        x          x
+#   PATCH  /diagnoses/status  x        -          -
+#   POST   /sync/push         x        -          -
+#   GET    /sync/pull         x        -          -
+#   GET    /sync/model-version x       x          x
+#
+# The split is by function, not seniority. Clinical acts — running inference,
+# recording a diagnosis, agreeing or disagreeing with the AI — are the
+# doctor's alone; a hospital admin having more privilege elsewhere does not
+# make them qualified to sign off a TB reading. Sync belongs to the tablet,
+# which only doctors use. Deleting a patient record is administrative, so it
+# sits with admin_rs and super_admin rather than with the clinician.
+
+READ_ROLES = (ROLE_DOCTOR, ROLE_ADMIN_RS, ROLE_SUPER_ADMIN)
+"""Anyone authenticated may read within their tenant scope."""
+
+PATIENT_WRITE_ROLES = (ROLE_DOCTOR, ROLE_ADMIN_RS)
+"""Both hospital roles maintain the patient register."""
+
+PATIENT_DELETE_ROLES = (ROLE_ADMIN_RS, ROLE_SUPER_ADMIN)
+"""Retiring a record is an administrative act, not a clinical one."""
+
+CLINICAL_ROLES = (ROLE_DOCTOR,)
+"""Inference, diagnosis records, verdicts, and tablet sync."""
 
 
 def get_tenant_id(

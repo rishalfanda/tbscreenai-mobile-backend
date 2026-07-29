@@ -1,11 +1,19 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentTenant, CurrentUser, DbSession
+from app.api.deps import (
+    PATIENT_DELETE_ROLES,
+    PATIENT_WRITE_ROLES,
+    READ_ROLES,
+    CurrentTenant,
+    CurrentUser,
+    DbSession,
+    require_roles,
+)
 from app.models.patient import Patient
 from app.schemas.patient import PatientCreate, PatientOut, PatientUpdate
 
@@ -30,7 +38,11 @@ def _get_owned_patient(db: Session, tenant_id: UUID, patient_id: UUID) -> Patien
     return patient
 
 
-@router.get("", response_model=list[PatientOut])
+@router.get(
+    "",
+    response_model=list[PatientOut],
+    dependencies=[Depends(require_roles(*READ_ROLES))],
+)
 def list_patients(
     db: DbSession,
     tenant_id: CurrentTenant,
@@ -53,7 +65,12 @@ def list_patients(
     return list(db.scalars(stmt))
 
 
-@router.post("", response_model=PatientOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=PatientOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(*PATIENT_WRITE_ROLES))],
+)
 def create_patient(
     body: PatientCreate, db: DbSession, tenant_id: CurrentTenant, _user: CurrentUser
 ) -> Patient:
@@ -77,14 +94,22 @@ def create_patient(
     return patient
 
 
-@router.get("/{patient_id}", response_model=PatientOut)
+@router.get(
+    "/{patient_id}",
+    response_model=PatientOut,
+    dependencies=[Depends(require_roles(*READ_ROLES))],
+)
 def get_patient(
     patient_id: UUID, db: DbSession, tenant_id: CurrentTenant, _user: CurrentUser
 ) -> Patient:
     return _get_owned_patient(db, tenant_id, patient_id)
 
 
-@router.put("/{patient_id}", response_model=PatientOut)
+@router.put(
+    "/{patient_id}",
+    response_model=PatientOut,
+    dependencies=[Depends(require_roles(*PATIENT_WRITE_ROLES))],
+)
 def update_patient(
     patient_id: UUID,
     body: PatientUpdate,
@@ -100,7 +125,11 @@ def update_patient(
     return patient
 
 
-@router.delete("/{patient_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{patient_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(*PATIENT_DELETE_ROLES))],
+)
 def delete_patient(
     patient_id: UUID, db: DbSession, tenant_id: CurrentTenant, _user: CurrentUser
 ) -> None:

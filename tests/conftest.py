@@ -29,6 +29,7 @@ _real_gensalt = bcrypt.gensalt
 bcrypt.gensalt = lambda rounds=4, prefix=b"2b": _real_gensalt(4, prefix)  # type: ignore[assignment]
 
 from app.core.database import get_db  # noqa: E402
+from app.core.rate_limit import limiter  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base, Hospital, User  # noqa: E402
@@ -38,6 +39,18 @@ from app.models import Base, Hospital, User  # noqa: E402
 def _compile_jsonb_sqlite(type_, compiler, **kw):
     """SQLite has no JSONB — store the same payload as TEXT/JSON."""
     return "JSON"
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> None:
+    """Give every test a fresh login budget.
+
+    slowapi's in-memory counter lives for the life of the process, and almost
+    every test logs in to get a header — so without this the suite exhausts the
+    limit partway through and the rest fail with 429 for no reason of their own.
+    Tests that are *about* the limit set their own budget explicitly.
+    """
+    limiter.reset()
 
 
 @pytest.fixture
@@ -109,6 +122,16 @@ def users(db_session: Session, hospitals: dict[str, Hospital]) -> dict[str, User
             tenant_id=hospitals["A"].id,
             hashed_password=hash_password("secret123"),
         ),
+        # A second hospital admin exists so tenant isolation can be tested with
+        # a role that IS allowed the verb. Probing a cross-tenant delete as a
+        # doctor only ever proves the role guard fired, never the tenant one.
+        "admin_b": User(
+            email="admin.b@rs.co.id",
+            full_name="Admin B",
+            role="admin_rs",
+            tenant_id=hospitals["B"].id,
+            hashed_password=hash_password("secret123"),
+        ),
         "super": User(
             email="super@tbscreen.co.id",
             full_name="Super Admin",
@@ -147,6 +170,17 @@ def headers_a(client: TestClient, users) -> dict:
 @pytest.fixture
 def headers_b(client: TestClient, users) -> dict:
     return auth_headers(client, "doctor.b@rs.co.id")
+
+
+@pytest.fixture
+def headers_admin_a(client: TestClient, users) -> dict:
+    """Hospital A admin — the role permitted to delete patient records."""
+    return auth_headers(client, "admin.a@rs.co.id")
+
+
+@pytest.fixture
+def headers_admin_b(client: TestClient, users) -> dict:
+    return auth_headers(client, "admin.b@rs.co.id")
 
 
 @pytest.fixture

@@ -256,33 +256,35 @@ class TestVersionConflictDetection:
 
 
 class TestPatientSoftDelete:
+    # Deletion is an admin_rs verb, so these use headers_admin_a. What is under
+    # test here is soft-delete behaviour, not who may invoke it.
     """C-3 — a hard DELETE of a patient holding diagnoses violated the foreign
     key and surfaced as a 500, and destroyed records that must be retained."""
 
-    def test_deleting_a_screened_patient_succeeds(self, client, headers_a):
+    def test_deleting_a_screened_patient_succeeds(self, client, headers_a, headers_admin_a):
         patient = _patient(client, headers_a, "TB009100")
         _diagnosis(client, headers_a, patient["id"])
 
         response = client.delete(
-            f"/api/v1/patients/{patient['id']}", headers=headers_a
+            f"/api/v1/patients/{patient['id']}", headers=headers_admin_a
         )
 
         assert response.status_code == 204
 
-    def test_the_diagnosis_survives_the_deletion(self, client, headers_a):
+    def test_the_diagnosis_survives_the_deletion(self, client, headers_a, headers_admin_a):
         patient = _patient(client, headers_a, "TB009101")
         diagnosis = _diagnosis(client, headers_a, patient["id"])
 
-        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_a)
+        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_admin_a)
 
         # The clinical record is retained even though the patient is hidden.
         kept = client.get(f"/api/v1/diagnoses/{diagnosis['id']}", headers=headers_a)
         assert kept.status_code == 200
         assert kept.json()["patient_id"] == patient["id"]
 
-    def test_a_deleted_patient_is_invisible(self, client, headers_a):
+    def test_a_deleted_patient_is_invisible(self, client, headers_a, headers_admin_a):
         patient = _patient(client, headers_a, "TB009102")
-        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_a)
+        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_admin_a)
 
         assert (
             client.get(
@@ -293,9 +295,9 @@ class TestPatientSoftDelete:
         listed = client.get("/api/v1/patients", headers=headers_a).json()
         assert all(row["id"] != patient["id"] for row in listed)
 
-    def test_the_code_becomes_reusable(self, client, headers_a):
+    def test_the_code_becomes_reusable(self, client, headers_a, headers_admin_a):
         first = _patient(client, headers_a, "TB009103")
-        client.delete(f"/api/v1/patients/{first['id']}", headers=headers_a)
+        client.delete(f"/api/v1/patients/{first['id']}", headers=headers_admin_a)
 
         again = client.post(
             "/api/v1/patients", headers=headers_a, json=make_patient_body("TB009103")
@@ -305,10 +307,10 @@ class TestPatientSoftDelete:
         assert again.json()["id"] != first["id"]
 
     def test_a_deleted_patient_cannot_be_edited_through_sync(
-        self, client, headers_a
+        self, client, headers_a, headers_admin_a
     ):
         patient = _patient(client, headers_a, "TB009104")
-        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_a)
+        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_admin_a)
 
         response = _push(
             client,
@@ -326,11 +328,11 @@ class TestPatientSoftDelete:
 
         assert response.json()["results"][0]["status"] == "conflict"
 
-    def test_delta_pull_carries_a_tombstone(self, client, headers_a):
+    def test_delta_pull_carries_a_tombstone(self, client, headers_a, headers_admin_a):
         """A full snapshot omits deleted rows, but a delta must report them —
         otherwise the tablet keeps a patient it should have dropped."""
         patient = _patient(client, headers_a, "TB009105")
-        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_a)
+        client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_admin_a)
 
         # `since` is deliberately far in the past rather than the row's own
         # created_at: SQLite's CURRENT_TIMESTAMP is second-granular, so create

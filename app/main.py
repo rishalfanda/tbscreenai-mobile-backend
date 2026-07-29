@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 
 settings = get_settings()
 
@@ -15,6 +17,11 @@ app = FastAPI(
         "AI inference is MOCKED in this phase."
     ),
 )
+
+# slowapi reads the limiter off app.state. The handler is ours rather than
+# slowapi's — see app/core/rate_limit.py for why.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

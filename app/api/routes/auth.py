@@ -1,10 +1,11 @@
 from uuid import UUID
 
 import jwt as pyjwt
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.deps import DbSession
+from app.core.rate_limit import limiter, login_rate_limit
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -26,7 +27,15 @@ def _token_pair(user: User) -> TokenPair:
 
 
 @router.post("/login", response_model=TokenPair)
-def login(body: LoginRequest, db: DbSession) -> TokenPair:
+@limiter.limit(login_rate_limit)
+def login(request: Request, body: LoginRequest, db: DbSession) -> TokenPair:
+    """Exchange credentials for a token pair.
+
+    The `request` parameter is not used by the handler — slowapi requires it in
+    the signature to find the client address. Rate limited because this is the
+    only unauthenticated endpoint that checks a secret, and so the only one
+    worth guessing at; see app/core/rate_limit.py for the per-process caveat.
+    """
     user = db.scalar(select(User).where(User.email == body.email))
     if user is None or not verify_password(body.password, user.hashed_password):
         # Same message for both cases — don't leak which emails exist.

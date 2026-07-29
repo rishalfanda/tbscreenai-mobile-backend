@@ -45,11 +45,20 @@ class TestPatientIsolation:
         still = client.get(f"/api/v1/patients/{patient['id']}", headers=headers_a)
         assert still.json()["name"] == "Pasien Uji"
 
-    def test_other_tenant_cannot_delete_patient(self, client, headers_a, headers_b):
+    def test_other_tenant_cannot_delete_patient(
+        self, client, headers_a, headers_admin_b
+    ):
+        # Hospital B's ADMIN on purpose, not its doctor. Doctors may not delete
+        # at all, so a doctor here would only ever prove the role guard fired.
+        # Isolation is demonstrated only by someone who does hold the verb.
         patient = _create_patient(client, headers_a)
 
-        response = client.delete(f"/api/v1/patients/{patient['id']}", headers=headers_b)
+        response = client.delete(
+            f"/api/v1/patients/{patient['id']}", headers=headers_admin_b
+        )
 
+        # 404 rather than 403 — a row in another hospital must not be revealed
+        # to exist, and the role guard has already been satisfied here.
         assert response.status_code == 404
         assert (
             client.get(f"/api/v1/patients/{patient['id']}", headers=headers_a).status_code

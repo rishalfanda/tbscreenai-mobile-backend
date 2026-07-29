@@ -1,10 +1,18 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentTenant, CurrentUser, DbSession
+from app.api.deps import (
+    CLINICAL_ROLES,
+    READ_ROLES,
+    CurrentTenant,
+    CurrentUser,
+    DbSession,
+    require_roles,
+)
+from app.core.config import get_settings
 from app.models.diagnosis import Diagnosis
 from app.models.patient import Patient
 from app.schemas.diagnosis import (
@@ -13,6 +21,7 @@ from app.schemas.diagnosis import (
     DiagnosisStatusUpdate,
     InferenceResult,
 )
+from app.services.image_validation import read_validated_image
 from app.services.inference import run_mock_inference
 
 router = APIRouter(prefix="/diagnoses", tags=["diagnoses"])
@@ -31,24 +40,31 @@ def _get_owned_diagnosis(db: Session, tenant_id: UUID, diagnosis_id: UUID) -> Di
     return diagnosis
 
 
-@router.post("/infer", response_model=InferenceResult)
+@router.post(
+    "/infer",
+    response_model=InferenceResult,
+    dependencies=[Depends(require_roles(*CLINICAL_ROLES))],
+)
 def infer(
     image: UploadFile, _tenant_id: CurrentTenant, _user: CurrentUser
 ) -> InferenceResult:
     """Accepts a chest X-ray image and returns a structured MOCK result.
 
-    The image is validated but not stored yet (storage lands with the real
-    model integration).
+    Validation is by file signature and size, not by the client's declared
+    content_type — that header is attacker-controlled and previously was the
+    only check. The bytes are not stored yet; storage lands with the real
+    model integration, at which point this is the function that already holds
+    them.
     """
-    if image.content_type not in ("image/png", "image/jpeg", "image/dicom"):
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported image type: {image.content_type}",
-        )
+    read_validated_image(image, get_settings().max_upload_bytes)
     return run_mock_inference(image.filename)
 
 
-@router.get("", response_model=list[DiagnosisOut])
+@router.get(
+    "",
+    response_model=list[DiagnosisOut],
+    dependencies=[Depends(require_roles(*READ_ROLES))],
+)
 def list_diagnoses(
     db: DbSession,
     tenant_id: CurrentTenant,
@@ -67,7 +83,12 @@ def list_diagnoses(
     return list(db.scalars(stmt))
 
 
-@router.post("", response_model=DiagnosisOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DiagnosisOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(*CLINICAL_ROLES))],
+)
 def create_diagnosis(
     body: DiagnosisCreate, db: DbSession, tenant_id: CurrentTenant, user: CurrentUser
 ) -> Diagnosis:
@@ -95,14 +116,22 @@ def create_diagnosis(
     return diagnosis
 
 
-@router.get("/{diagnosis_id}", response_model=DiagnosisOut)
+@router.get(
+    "/{diagnosis_id}",
+    response_model=DiagnosisOut,
+    dependencies=[Depends(require_roles(*READ_ROLES))],
+)
 def get_diagnosis(
     diagnosis_id: UUID, db: DbSession, tenant_id: CurrentTenant, _user: CurrentUser
 ) -> Diagnosis:
     return _get_owned_diagnosis(db, tenant_id, diagnosis_id)
 
 
-@router.patch("/{diagnosis_id}/status", response_model=DiagnosisOut)
+@router.patch(
+    "/{diagnosis_id}/status",
+    response_model=DiagnosisOut,
+    dependencies=[Depends(require_roles(*CLINICAL_ROLES))],
+)
 def update_status(
     diagnosis_id: UUID,
     body: DiagnosisStatusUpdate,

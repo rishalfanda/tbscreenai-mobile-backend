@@ -16,6 +16,9 @@ email-validator~=2.2.0
 # Auth
 PyJWT~=2.10.1
 bcrypt~=4.3.0
+# Rate limiting for /auth/login. In-memory and therefore per-process — see the
+# caveat in app/core/rate_limit.py before running multiple workers.
+slowapi~=0.1.10
 
 # Testing (FASE 5, installed now so the stack is pinned together)
 pytest~=8.4.0

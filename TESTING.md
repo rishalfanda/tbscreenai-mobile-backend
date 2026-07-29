@@ -2,7 +2,7 @@
 
 Ringkasan cakupan uji per 2026-07-29. Semua test hijau.
 
-## Backend (pytest) — 68 test (~2 detik)
+## Backend (pytest) — 134 test (~5 detik), coverage 98%
 
 ```bash
 cd C:/Users/devel/tbscreenai-backend
@@ -22,6 +22,8 @@ Cost produksi tidak tersentuh.
 | `test_sync.py` | Idempotency (op id sama → applied lalu skipped; retry 5× tetap 1 record; op id per-tenant; batch campur baru+lama); konflik (base_updated_at basi → conflict, data tidak ditimpa; entity tak dikenal → conflict bukan crash; base terkini → applied); pull (server_time, delta `since`) |
 | `test_auth.py` | Login benar/salah; email tak dikenal = pesan sama dengan password salah (anti-enumeration); akun nonaktif ditolak; refresh token; access token ≠ refresh token; tanda tangan dipalsukan ditolak; semua endpoint wajib auth |
 | `test_patients_diagnoses.py` | CRUD pasien; kode dobel 409; search nama+kode; validasi field (gender/age); **tenant_id di body diabaikan**; diagnosis CRUD; disagree wajib catatan; filter; inference mock (is_mock=true, tolak content-type non-gambar) |
+| `test_role_authorization.py` | **Setiap sel** matriks akses di `app/api/deps.py` (13 endpoint × 3 peran); urutan guard (peran 403 dulu, baru tenant 404 — supaya kode error tidak membocorkan keberadaan baris); tindakan klinis (infer, simpan diagnosis, verdict, sync) khusus doctor |
+| `test_security_controls.py` | Rate limit login (budget habis → 429, hitung percobaan bukan kegagalan, ada `Retry-After`, endpoint lain tidak kena); validasi upload (content_type palsu ditolak, kosong, kebesaran, PNG/JPEG/DICOM asli lolos, ekstensi nama file tidak dipercaya); penjagaan config produksi (secret dev/pendek, CORS `*`, SQLite — semua ditolak, dan semua dilaporkan sekaligus) |
 | `test_data_integrity.py` | Regresi 4 cacat integritas data (lihat `docs/ARCHITECTURE_REVIEW.md`): sync menolak status diagnosis sembarang & disagree tanpa catatan, dan tidak bisa menyentuh field selain verdict; konflik terdeteksi lewat `version` walau dua edit di detik yang sama; soft delete pasien (diagnosis selamat, kode bisa dipakai ulang, tombstone di delta pull); satu item batch rusak tidak menjatuhkan item lain |
 
 **Bug asli yang ditemukan pytest:** perbandingan `datetime` naive vs aware di
