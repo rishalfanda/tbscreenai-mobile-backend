@@ -66,6 +66,26 @@ def downgrade() -> None:
     op.drop_index('ix_diagnoses_updated_at', table_name='diagnoses')
     op.drop_index('ix_patients_updated_at', table_name='patients')
 
+    # Going back means the code uniqueness rule applies to every row again,
+    # including soft-deleted ones. If a code was reused after a deletion, that
+    # constraint cannot be recreated — and the only ways forward are to destroy
+    # patient records or to rename them. Neither is a migration's call to make,
+    # so stop with an explanation instead of a bare UniqueViolation.
+    duplicates = op.get_bind().execute(sa.text("""
+        SELECT tenant_id, code, count(*) AS n
+        FROM patients
+        GROUP BY tenant_id, code
+        HAVING count(*) > 1
+    """)).fetchall()
+    if duplicates:
+        listed = ', '.join(f'{row.code} (x{row.n})' for row in duplicates)
+        raise RuntimeError(
+            "Cannot downgrade: these patient codes were reused after a soft "
+            f"delete and are now duplicated across live and deleted rows: {listed}. "
+            "Decide per record whether to purge the deleted row or re-code it, "
+            "then run the downgrade again."
+        )
+
     op.drop_index('uq_patient_tenant_code', table_name='patients')
     op.create_unique_constraint(
         'uq_patient_tenant_code', 'patients', ['tenant_id', 'code']
