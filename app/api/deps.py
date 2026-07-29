@@ -6,6 +6,7 @@ derived from the verified JWT — cross-hospital leakage is prevented at the
 dependency layer, not by remembering to filter in each handler.
 """
 
+from collections.abc import Callable
 from typing import Annotated
 from uuid import UUID
 
@@ -34,11 +35,15 @@ def get_current_user(
     try:
         payload = decode_token(credentials.credentials)
     except pyjwt.PyJWTError:
+        # `from None` on purpose: the PyJWT error states exactly why a token
+        # failed — expired vs bad signature vs malformed. That distinction
+        # belongs in neither the response nor a chained traceback an error
+        # reporter might ship elsewhere. The caller gets one flat 401.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from None
     if payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -57,7 +62,7 @@ def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-def require_roles(*roles: str):
+def require_roles(*roles: str) -> Callable[[User], User]:
     """Route guard: `dependencies=[Depends(require_roles("doctor", "admin_rs"))]`."""
 
     def _checker(user: CurrentUser) -> User:

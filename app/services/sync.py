@@ -9,7 +9,8 @@ Guarantees:
   recorded as "conflict" and left for manual doctor review (FASE 4 UI).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -22,7 +23,15 @@ from app.schemas.diagnosis import DiagnosisCreate, DiagnosisStatusUpdate
 from app.schemas.patient import PatientCreate, PatientUpdate
 from app.schemas.sync import SyncPushItem, SyncPushResult
 
-_ENTITY_MODEL = {"patient": Patient, "diagnosis": Diagnosis}
+SyncableRow = Patient | Diagnosis
+
+# Typed rather than left as dict[str, type[Base]]: both rows carry id, tenant_id
+# and version, and saying so lets the checker verify the generic update path
+# instead of trusting it.
+_ENTITY_MODEL: dict[str, type[Patient] | type[Diagnosis]] = {
+    "patient": Patient,
+    "diagnosis": Diagnosis,
+}
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -39,11 +48,11 @@ def _as_utc(dt: datetime) -> datetime:
     That is also precisely why this path cannot detect a real same-second
     conflict — which is what base_version is for. See _has_conflict.
     """
-    aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
     return aware.replace(microsecond=0)
 
 
-def _has_conflict(row, item: SyncPushItem) -> bool:
+def _has_conflict(row: SyncableRow, item: SyncPushItem) -> bool:
     """Has the server row moved on since the client last read it?
 
     Version first: an integer the server bumps on every UPDATE, compared
@@ -122,7 +131,11 @@ def apply_push_item(
         if hasattr(model, "deleted_at"):
             # A soft-deleted record is gone as far as clients are concerned.
             stmt = stmt.where(model.deleted_at.is_(None))
-        row = db.scalar(stmt)
+        # cast, not a type: ignore. `model` is picked from _ENTITY_MODEL at
+        # runtime, so SQLAlchemy widens select(model) back to the Base class
+        # and the concrete row type is genuinely unrecoverable by inference.
+        # _ENTITY_MODEL is the thing that guarantees it is one of these two.
+        row = cast(SyncableRow | None, db.scalar(stmt))
         if row is None:
             _log(db, tenant_id=tenant_id, item=item, device_id=device_id,
                  status="conflict", entity_id=item.entity_id)
@@ -167,15 +180,15 @@ def apply_push_item(
 
     # --- Create path ------------------------------------------------------
     if item.entity_type == "patient":
-        data = PatientCreate.model_validate(item.payload)
-        row = Patient(tenant_id=tenant_id, **data.model_dump())
+        patient_data = PatientCreate.model_validate(item.payload)
+        row = Patient(tenant_id=tenant_id, **patient_data.model_dump())
     else:
-        data = DiagnosisCreate.model_validate(item.payload)
+        diagnosis_data = DiagnosisCreate.model_validate(item.payload)
         row = Diagnosis(
             tenant_id=tenant_id,
             created_by=user_id,
-            findings=data.findings.model_dump(),
-            **data.model_dump(exclude={"findings"}, exclude_none=True),
+            findings=diagnosis_data.findings.model_dump(),
+            **diagnosis_data.model_dump(exclude={"findings"}, exclude_none=True),
         )
     if item.entity_id is not None:
         # Client pre-assigned the UUID offline — keep it so future updates match.

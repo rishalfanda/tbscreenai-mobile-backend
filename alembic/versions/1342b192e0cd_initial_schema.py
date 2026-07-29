@@ -1,15 +1,16 @@
 """initial schema
 
 Revision ID: 1342b192e0cd
-Revises: 
+Revises:
 Create Date: 2026-07-23 15:42:01.850540
 
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = '1342b192e0cd'
 down_revision: Union[str, None] = None

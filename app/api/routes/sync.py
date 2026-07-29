@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from pydantic import ValidationError
@@ -84,7 +84,7 @@ def pull(
     )
 
     return SyncPullResponse(
-        server_time=datetime.now(timezone.utc),
+        server_time=datetime.now(UTC),
         patients=list(db.scalars(patients_stmt)),
         diagnoses=list(db.scalars(diagnoses_stmt)),
         latest_model=(
@@ -94,7 +94,7 @@ def pull(
 
 
 @router.get("/model-version", response_model=ModelVersionOut | None)
-def latest_model_version(db: DbSession, _user: CurrentUser):
+def latest_model_version(db: DbSession, _user: CurrentUser) -> ModelVersionOut | None:
     """Latest AI model release — powers the ModelUpdateCard check."""
     latest = db.scalar(select(ModelVersion).where(ModelVersion.is_latest.is_(True)))
     return ModelVersionOut.model_validate(latest) if latest else None

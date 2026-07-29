@@ -1,0 +1,58 @@
+[tool.ruff]
+# 100 fits the existing code (longest line is 96) — no reformatting churn.
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes — unused imports/names, the ones that bite
+    "I",    # import sorting
+    "B",    # bugbear — mutable defaults, shadowed loop vars, ...
+    "UP",   # pyupgrade — keep syntax current for the target version
+    "N",    # pep8-naming
+    "RUF",  # ruff's own checks
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic writes these files from its own template. Reformatting generated
+# scaffolding means every future autogenerate re-triggers the same findings.
+"alembic/versions/*.py" = ["UP007", "UP035", "E501"]
+"alembic/env.py" = ["UP007", "UP035"]
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+files = ["app", "scripts"]
+# The codebase already annotates everything, so these are enforcement rather
+# than aspiration. Kept off strict mode: `disallow_any_generics` and friends
+# would flag SQLAlchemy's Mapped[dict]/Mapped[list] columns, which are
+# deliberate — the JSONB payload shape is validated by Pydantic, not by mypy.
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# Alembic migration scripts are generated and mostly untyped by design.
+module = "alembic.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/__init__.py", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
+# A floor set just under the measured 97%, not an aspiration: it exists to
+# catch coverage falling off, and a number nobody can hit gets switched off.
+fail_under = 95
+show_missing = true

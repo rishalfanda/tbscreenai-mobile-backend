@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentTenant, CurrentUser, DbSession
 from app.models.patient import Patient
@@ -11,7 +12,7 @@ from app.schemas.patient import PatientCreate, PatientOut, PatientUpdate
 router = APIRouter(prefix="/patients", tags=["patients"])
 
 
-def _get_owned_patient(db, tenant_id: UUID, patient_id: UUID) -> Patient:
+def _get_owned_patient(db: Session, tenant_id: UUID, patient_id: UUID) -> Patient:
     """Fetch by id AND tenant, live rows only. A patient of another hospital —
     or one that was soft-deleted — yields the same 404 as a nonexistent id, so
     there is nothing to probe for."""
@@ -44,7 +45,11 @@ def list_patients(
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(or_(Patient.name.ilike(pattern), Patient.code.ilike(pattern)))
-    stmt = stmt.order_by(Patient.last_visit.desc().nulls_last()).limit(min(limit, 500)).offset(offset)
+    stmt = (
+        stmt.order_by(Patient.last_visit.desc().nulls_last())
+        .limit(min(limit, 500))
+        .offset(offset)
+    )
     return list(db.scalars(stmt))
 
 
@@ -106,5 +111,5 @@ def delete_patient(
     surfaced as a 500 for any patient who had ever been screened.
     """
     patient = _get_owned_patient(db, tenant_id, patient_id)
-    patient.deleted_at = datetime.now(timezone.utc)
+    patient.deleted_at = datetime.now(UTC)
     db.commit()

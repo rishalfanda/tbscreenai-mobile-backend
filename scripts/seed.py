@@ -78,12 +78,16 @@ def main() -> None:
                 )
                 print(f"created user {email} ({role})")
 
-        for spec in MODEL_VERSIONS:
+        # Named apart from the hospital loop above: same word previously stood
+        # for two different dict shapes, which is what the type checker caught.
+        for model_spec in MODEL_VERSIONS:
             if db.scalar(
-                select(ModelVersion).where(ModelVersion.version == spec["version"])
+                select(ModelVersion).where(
+                    ModelVersion.version == model_spec["version"]
+                )
             ) is None:
-                db.add(ModelVersion(**spec))
-                print(f"created model version {spec['version']}")
+                db.add(ModelVersion(**model_spec))
+                print(f"created model version {model_spec['version']}")
 
         db.commit()
         print("seed complete")

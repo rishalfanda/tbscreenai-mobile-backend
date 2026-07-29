@@ -48,7 +48,11 @@ def db_session() -> Generator[Session, None, None]:
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    TestingSession = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    # Capitalised because sessionmaker returns a class, which is the SQLAlchemy
+    # convention — pep8-naming reads it as a variable and disagrees.
+    TestingSession = sessionmaker(  # noqa: N806
+        bind=engine, autoflush=False, expire_on_commit=False
+    )
     session = TestingSession()
     try:
         yield session

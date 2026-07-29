@@ -1,0 +1,71 @@
+name: backend
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy
+
+      - name: Test
+        # SQLite in-memory per test — no service container needed here.
+        run: pytest -q --cov
+
+  migrations:
+    # The unit suite runs on SQLite, so JSONB, the partial unique index, and
+    # the migrations themselves are never exercised by it. This job is the only
+    # place they run against the database production actually uses.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tbscreen
+          POSTGRES_PASSWORD: tbscreen_dev
+          POSTGRES_DB: tbscreenai
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tbscreen -d tbscreenai"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://tbscreen:tbscreen_dev@localhost:5432/tbscreenai
+      JWT_SECRET_KEY: ci-secret-key-at-least-32-characters-long
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Migrate to head
+        run: alembic upgrade head
+
+      - name: Seed
+        run: python -m scripts.seed
+
+      - name: Downgrade and re-upgrade
+        # A migration you cannot roll back is a migration you cannot deploy
+        # with confidence.
+        run: |
+          alembic downgrade -1
+          alembic upgrade head

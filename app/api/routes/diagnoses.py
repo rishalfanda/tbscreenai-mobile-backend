@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentTenant, CurrentUser, DbSession
 from app.models.diagnosis import Diagnosis
@@ -17,7 +18,7 @@ from app.services.inference import run_mock_inference
 router = APIRouter(prefix="/diagnoses", tags=["diagnoses"])
 
 
-def _get_owned_diagnosis(db, tenant_id: UUID, diagnosis_id: UUID) -> Diagnosis:
+def _get_owned_diagnosis(db: Session, tenant_id: UUID, diagnosis_id: UUID) -> Diagnosis:
     diagnosis = db.scalar(
         select(Diagnosis).where(
             Diagnosis.id == diagnosis_id, Diagnosis.tenant_id == tenant_id

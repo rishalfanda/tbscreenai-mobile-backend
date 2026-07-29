@@ -20,3 +20,9 @@ bcrypt~=4.3.0
 # Testing (FASE 5, installed now so the stack is pinned together)
 pytest~=8.4.0
 httpx~=0.28.1
+pytest-cov~=7.1.0
+
+# Quality gates — run by CI (.github/workflows/backend.yml).
+# Both are configured in pyproject.toml.
+ruff~=0.16.0
+mypy~=2.3.0

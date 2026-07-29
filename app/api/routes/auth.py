@@ -46,10 +46,12 @@ def refresh(body: RefreshRequest, db: DbSession) -> TokenPair:
     try:
         payload = decode_token(body.refresh_token)
     except pyjwt.PyJWTError:
+        # `from None` — see app/api/deps.py: why the token failed is not the
+        # client's business, and should not ride along in a traceback either.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
-        )
+        ) from None
     if payload.get("type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token required"
