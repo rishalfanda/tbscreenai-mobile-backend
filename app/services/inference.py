@@ -8,12 +8,31 @@ before the real model exists.
 
 import random
 
+from fastapi import HTTPException, status
+
+from app.core.config import get_settings
 from app.schemas.diagnosis import Findings, InferenceResult
 
 MOCK_MODEL_VERSION = "TBScreen v2.1.0"
 
 
 def run_mock_inference(image_filename: str | None = None) -> InferenceResult:
+    """Return a structured MOCK result, or refuse outright in production.
+
+    The verdict below is a coin flip. A coin flip presented as a clinical
+    screening result is the worst failure this system can have, and until now
+    nothing stopped it from reaching a real deployment. 503 rather than 500:
+    nothing is broken, the real model simply is not installed yet.
+    """
+    if get_settings().is_production:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Real AI model is not installed. Screening is unavailable "
+                "until a trained model replaces this placeholder."
+            ),
+        )
+
     is_positive = random.random() < 0.5
     confidence = 75 + random.randint(0, 23)
     processing_ms = 2600 + random.randint(0, 499)
