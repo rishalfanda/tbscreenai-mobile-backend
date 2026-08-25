@@ -309,3 +309,208 @@ Rate limit `slowapi` dihitung per-proses, jadi N worker = N kali budget.
 - [ ] Nol jalur kode yang bisa menghasilkan vonis TB acak
 - [ ] Kebijakan retensi citra terjawab dan terimplementasi
 - [ ] Siap tinjauan klinis
+
+---
+
+## Fase E — Lingkup Backend Engineer (usulan)
+
+Turunan dari arahan Pak Wahyono dan Mas Risha pada rapat 24 Agustus 2026.
+Task-task ini adalah mandat langsung yang belum tercatat di plan.md.
+
+Catatan urutan: Task 16 adalah fondasi — Task 17 dan 18 bergantung padanya.
+Ditaruh di akhir agar penomoran Fase A–D tidak bergeser; silakan diatur ulang
+kalau lebih baik disisipkan sesuai graf dependensi.
+
+---
+
+### Task 16: Device Registry
+**Deskripsi:** `sync_logs.device_id` bertipe `String(100)`, nullable, dan tidak
+terhubung ke tabel mana pun. Perangkat tidak pernah diregistrasi, sehingga server
+tidak bisa menjawab tiga pertanyaan yang menentukan operasional lapangan: perangkat
+mana yang masih memakai model versi lama, perangkat mana yang belum sinkron berhari-hari,
+dan perangkat mana yang harus di-rollback bila rilis model bermasalah. Tanpa registry,
+rollout model bertahap dan pencabutan akses perangkat hilang tidak mungkin dilakukan.
+
+Aturan relasi dari Pak Wahyono: satu rumah sakit boleh mengoperasikan dua perangkat
+atau lebih, tetapi satu perangkat tidak pernah melayani dua rumah sakit. Aturan itu
+diterjemahkan menjadi foreign key non-nullable dari `devices` ke `hospitals`.
+
+**Acceptance criteria:**
+- [ ] Tabel `devices` dengan `device_code` unik dan `hospital_id` FK non-nullable
+- [ ] Kolom status siklus hidup: `pending | active | suspended | decommissioned`
+- [ ] `sync_logs.device_id` menjadi FK ke `devices.id`, dengan migrasi data lama
+- [ ] `POST /devices` provisioning — khusus `super_admin`
+- [ ] `GET /devices` — `admin_rs` hanya melihat perangkat rumah sakitnya
+- [ ] `POST /devices/{id}/revoke` mencabut akses perangkat hilang
+- [ ] Perangkat memiliki kredensial sendiri, terpisah dari JWT dokter
+- [ ] `GET /devices/fleet-status` melaporkan versi model dan waktu sinkron terakhir
+
+**Verification:**
+- [ ] Test: kredensial perangkat RS A ditolak saat dipakai untuk data RS B
+- [ ] Test: perangkat yang dicabut tidak bisa lagi melakukan sync push
+- [ ] Test: `hospital_id` tidak boleh null pada level database
+- [ ] `alembic downgrade -1 && alembic upgrade head` berjalan bersih
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Dependencies:** None
+**Files:** `app/models/device.py`, `app/models/sync_log.py`, `app/schemas/device.py`, `app/api/routes/devices.py`, `app/api/deps.py`, `alembic/versions/`, `tests/test_devices.py`
+**Ukuran:** L
+
+---
+
+### Task 17: Distribusi artefak model ke perangkat
+**Deskripsi:** `model_versions.download_url` bertipe nullable dan tidak pernah diisi,
+termasuk di `scripts/seed.py`. Yang tersedia sekarang adalah *pengecekan versi*, bukan
+*transfer model*: server dapat memberitahu bahwa v1.3.1 berukuran 47,2 MB tersedia,
+lalu perangkat bertanya "unduh dari mana" dan jawabannya kosong. Di sisi Flutter,
+`ModelUpdateCard` sudah memiliki state machine idle → checking → updateAvailable
+beserta indikator progres unduhan — rangkanya siap, mesinnya belum ada.
+
+Katalog juga belum memuat cara memverifikasi artefak. Tanpa checksum, artefak yang
+rusak separuh saat diunduh di jaringan 3T tidak akan terdeteksi. Tanpa tanda tangan,
+kanal update model menjadi jalur injeksi perilaku ke alat kesehatan: siapa pun yang
+dapat mendorong artefak palsu ke perangkat sedang mengubah hasil skrining pasien.
+
+Selain itu `is_latest` tidak memiliki constraint keunikan. Dua baris dapat sama-sama
+bernilai `True`, dan `db.scalar()` di `app/api/routes/sync.py` akan mengembalikan
+salah satunya secara acak tanpa menimbulkan error — perangkat yang berbeda bisa
+mengunduh artefak yang berbeda tanpa ada yang menyadari.
+
+**Acceptance criteria:**
+- [ ] Kolom baru di `model_versions`: `sha256`, `signature`, `artifact_key`, `min_app_version`, `target_hardware`
+- [ ] Partial unique index memastikan hanya satu baris `is_latest = true`
+- [ ] Artefak disimpan di object storage, bukan sebagai kolom biner di database
+- [ ] Endpoint penyaji artefak mengembalikan presigned URL berumur pendek
+- [ ] Unduhan bersifat resumable — putus di tengah dilanjut, bukan diulang dari nol
+- [ ] Perangkat memverifikasi checksum **dan** tanda tangan sebelum artefak diaktifkan
+- [ ] Pergantian artefak bersifat atomik, diikuti health check, dan otomatis rollback ke versi sebelumnya bila gagal
+- [ ] Rollout bertahap per cohort perangkat (10 % → 50 % → 100 %)
+- [ ] Setiap hasil inferensi mencatat versi artefak, bukan hanya versi model logis
+
+**Verification:**
+- [ ] Test: dua baris `is_latest = true` ditolak di level database
+- [ ] Test: artefak dengan checksum tidak cocok ditolak dan tidak pernah diaktifkan
+- [ ] Test: perangkat yang tertinggal beberapa versi langsung menerima versi terbaru, tidak berurutan satu per satu
+- [ ] Test: perangkat di luar cohort canary tetap menerima versi lama
+- [ ] `alembic downgrade -1 && alembic upgrade head` berjalan bersih
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Dependencies:** Task 6 (object storage), Task 16 (registry perangkat untuk cohort dan rollback)
+**Files:** `app/models/model_version.py`, `app/schemas/model_version.py`, `app/api/routes/sync.py`, `app/services/storage.py`, `alembic/versions/`, `scripts/seed.py`, `tests/test_model_distribution.py`
+**Ukuran:** L
+
+---
+
+### Task 18: Upload citra chunked & resumable
+**Deskripsi:** Sinkronisasi saat ini hanya menangani record; citra belum punya jalur
+sinkronisasi sama sekali. Rontgen berukuran megabyte, dan perangkat beroperasi di
+wilayah dengan konektivitas terputus-putus. Upload sekali kirim berarti kegagalan di
+detik terakhir memaksa mengulang dari nol — pada jaringan 3T, citra semacam itu
+berpotensi tidak pernah terkirim sama sekali.
+
+Metadata dan citra juga perlu dipisahkan jalurnya. Metadata berukuran kilobyte dan
+harus lolos lebih dulu, sehingga server minimal mengetahui bahwa skrining terjadi
+meski citranya menyusul belakangan.
+
+**Acceptance criteria:**
+- [ ] `POST /blobs/init` mengembalikan `upload_id` dan daftar chunk yang sudah diterima
+- [ ] `PUT /blobs/{upload_id}/chunks/{n}` menerima potongan dengan `Content-Range`
+- [ ] `POST /blobs/{upload_id}/complete` merakit dan memverifikasi SHA-256 keseluruhan
+- [ ] Sesi yang terputus dilanjut dari chunk terakhir yang di-ACK, bukan dari nol
+- [ ] Antrian berprioritas: metadata mendahului citra
+- [ ] Throttling bandwidth agar tidak menghabiskan jaringan puskesmas
+- [ ] Retry memakai exponential backoff dengan jitter
+- [ ] Error diklasifikasi: 5xx di-retry, payload cacat ditandai poisoned dan dihentikan
+
+**Verification:**
+- [ ] Test: upload diputus di tengah lalu dilanjut → berkas akhir identik
+- [ ] Test: checksum tidak cocok → server meminta chunk yang rusak dikirim ulang
+- [ ] Test: chunk dikirim dua kali tidak menghasilkan duplikasi
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Dependencies:** Task 6, Task 16
+**Files:** `app/api/routes/blobs.py`, `app/schemas/blob.py`, `app/services/storage.py`, `tests/test_blob_upload.py`
+**Ukuran:** M
+
+---
+
+### Task 19: Backup server dan pemulihan terverifikasi
+**Deskripsi:** Belum ada mekanisme backup sama sekali. "Backup" dan "sinkronisasi"
+adalah dua hal berbeda dan keduanya diminta: sinkronisasi memindahkan data lapangan
+ke server, backup melindungi server itu sendiri dari kehilangan data.
+
+Backup yang tidak pernah diuji pemulihannya bukan backup, melainkan asumsi. Karena
+itu latihan restore masuk sebagai kriteria, bukan sekadar catatan.
+
+**Acceptance criteria:**
+- [ ] Postgres WAL archiving aktif dengan point-in-time recovery
+- [ ] Backup object storage terjadwal
+- [ ] Berkas backup terenkripsi, kuncinya disimpan terpisah dari backup
+- [ ] Katalog `model_versions` ikut ter-backup, sehingga hasil skrining lama tetap dapat ditelusuri ke artefak yang menghasilkannya
+- [ ] Kebijakan retensi backup terdokumentasi
+
+**Verification:**
+- [ ] Latihan restore ke instance kosong berhasil dan datanya utuh
+- [ ] Point-in-time recovery ke satu jam sebelumnya berhasil
+- [ ] Prosedur restore terdokumentasi dan dapat diikuti orang lain
+
+**Dependencies:** Task 6
+**Files:** `docker-compose.prod.yml`, `docs/BACKUP_RECOVERY.md`, `scripts/backup.sh`
+**Ukuran:** M
+
+---
+
+### Task 20: Akses admin darurat saat perangkat offline
+**Deskripsi:** Bila perangkat berada di lokasi tanpa konektivitas dan administrator
+perlu masuk, tidak ada jalur sama sekali saat ini. Diperlukan mekanisme akses darurat
+yang tidak bergantung pada jaringan.
+
+TOTP kurang tepat untuk konteks ini karena bergantung pada jam yang tersinkron,
+sementara perangkat di wilayah 3T sering beroperasi tanpa NTP dan jamnya melenceng.
+Challenge–response tidak memiliki ketergantungan itu: perangkat menampilkan kode
+tantangan, administrator menghitung jawabannya, petugas memasukkannya.
+
+**Acceptance criteria:**
+- [ ] Mekanisme challenge–response, bukan kode statis
+- [ ] Kode berumur pendek dan hanya berlaku satu kali
+- [ ] Setiap pemakaian tercatat di audit log beserta identitas perangkat
+- [ ] Percobaan gagal dibatasi lajunya
+- [ ] Akses dapat dicabut saat perangkat kembali online
+
+**Verification:**
+- [ ] Test: kode yang sudah dipakai ditolak pada percobaan kedua
+- [ ] Test: kode milik perangkat lain ditolak
+- [ ] Test: percobaan gagal berulang memicu pembatasan
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Dependencies:** Task 16
+**Files:** `app/services/break_glass.py`, `app/api/routes/devices.py`, `app/models/audit_log.py`, `tests/test_break_glass.py`
+**Ukuran:** M
+
+---
+
+### Task 21: De-identifikasi PHI sebelum data masuk kolam pelatihan
+**Deskripsi:** Forum diseminasi merekomendasikan validasi lanjutan hingga 40.000 citra,
+dan citra itu akan datang dari lapangan. Data pasien tidak boleh berpindah ke kolam
+pelatihan dalam bentuk teridentifikasi.
+
+Jawaban yang tepat bukan mengeluarkan record pasien dari sinkronisasi — citra tanpa
+record tidak dapat diaudit secara klinis dan tidak bernilai sebagai data pelatihan.
+Yang tepat adalah membuang atribut identitas dan menyimpan pseudonim sebagai penghubung,
+sehingga privasi terjaga tanpa kehilangan ketertelusuran.
+
+**Acceptance criteria:**
+- [ ] Tag PHI pada berkas DICOM dihapus sebelum data masuk kolam pelatihan
+- [ ] Pemetaan pseudonim ke identitas asli disimpan terpisah dengan kontrol akses berbeda
+- [ ] Flag consent per pasien menentukan boleh atau tidaknya data dipakai untuk pelatihan
+- [ ] Data tanpa consent tidak pernah masuk kolam pelatihan
+- [ ] Pencabutan consent memicu penghapusan dari kolam pelatihan
+
+**Verification:**
+- [ ] Test: berkas DICOM hasil de-identifikasi tidak lagi memuat tag identitas
+- [ ] Test: pasien tanpa consent tidak muncul di ekspor data pelatihan
+- [ ] Test: pencabutan consent menghapus data terkait
+
+**Dependencies:** Task 7
+**Files:** `app/services/deidentify.py`, `app/models/patient.py`, `app/api/routes/exports.py`, `alembic/versions/`, `tests/test_deidentification.py`
+**Ukuran:** M
