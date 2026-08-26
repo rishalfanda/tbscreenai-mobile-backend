@@ -6,6 +6,8 @@ medical records, and a stale edit must never silently overwrite newer data.
 
 import uuid
 
+import pytest
+
 from tests.conftest import make_patient_body
 
 
@@ -147,6 +149,7 @@ class TestConflict:
 
 
 class TestPull:
+    @pytest.mark.empty_catalog
     def test_pull_returns_server_time_and_latest_model(self, client, headers_a):
         response = client.get("/api/v1/sync/pull", headers=headers_a)
 

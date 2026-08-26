@@ -22,7 +22,7 @@ from app.schemas.diagnosis import (
     InferenceResult,
 )
 from app.services.image_validation import read_validated_image
-from app.services.inference import run_mock_inference
+from app.services.inference import latest_model_version, run_mock_inference
 
 router = APIRouter(prefix="/diagnoses", tags=["diagnoses"])
 
@@ -46,7 +46,10 @@ def _get_owned_diagnosis(db: Session, tenant_id: UUID, diagnosis_id: UUID) -> Di
     dependencies=[Depends(require_roles(*CLINICAL_ROLES))],
 )
 def infer(
-    image: UploadFile, _tenant_id: CurrentTenant, _user: CurrentUser
+    image: UploadFile,
+    db: DbSession,
+    _tenant_id: CurrentTenant,
+    _user: CurrentUser,
 ) -> InferenceResult:
     """Accepts a chest X-ray image and returns a structured MOCK result.
 
@@ -57,7 +60,7 @@ def infer(
     them.
     """
     read_validated_image(image, get_settings().max_upload_bytes)
-    return run_mock_inference(image.filename)
+    return run_mock_inference(latest_model_version(db), image.filename)
 
 
 @router.get(
