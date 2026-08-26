@@ -188,3 +188,39 @@ class TestProductionConfigGuard:
 
         assert not settings.is_production
         assert settings.cors_origins == ["*"]
+
+class TestMockInferenceProductionGuard:
+    """B-1 — the mock decides TB positive/negative with random.random(), and
+    nothing stopped that verdict from being served as a clinical result."""
+
+    def test_inference_is_refused_in_production(
+        self, client, headers_a, monkeypatch
+    ):
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "env", "production", raising=False)
+
+        response = _infer(client, headers_a, VALID_PNG)
+
+        assert response.status_code == 503
+
+    def test_the_refusal_says_the_model_is_missing(
+        self, client, headers_a, monkeypatch
+    ):
+        """A raw stack trace tells the doctor nothing about what to do next."""
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "env", "production", raising=False)
+
+        response = _infer(client, headers_a, VALID_PNG)
+
+        assert "model" in response.text.lower()
+
+    def test_development_still_returns_a_mock_result(self, client, headers_a):
+        """The guard must not break the contract the tablet is built against."""
+        response = _infer(client, headers_a, VALID_PNG)
+
+        assert response.status_code == 200
+        assert response.json()["is_mock"] is True
