@@ -408,28 +408,46 @@ wilayah dengan konektivitas terputus-putus. Upload sekali kirim berarti kegagala
 detik terakhir memaksa mengulang dari nol — pada jaringan 3T, citra semacam itu
 berpotensi tidak pernah terkirim sama sekali.
 
-Metadata dan citra juga perlu dipisahkan jalurnya. Metadata berukuran kilobyte dan
-harus lolos lebih dulu, sehingga server minimal mengetahui bahwa skrining terjadi
-meski citranya menyusul belakangan.
+Verifikasi integritas dilakukan **saat chunk tiba**, bukan setelah perakitan. Hash
+keseluruhan hanya dapat membuktikan bahwa berkas akhir rusak; ia tidak dapat menunjuk
+chunk mana yang harus dikirim ulang, sehingga satu-satunya pemulihan yang tersisa
+adalah mengulang seluruh unggahan. Karena itu klien menyertakan manifest berisi hash
+setiap chunk pada awal sesi, dan server menolak chunk yang tidak cocok seketika —
+kesalahan terdeteksi pada potongan berukuran megabyte, bukan pada berkas utuh.
+
+Metadata dan citra juga dipisahkan jalurnya. Metadata berukuran kilobyte dan harus
+lolos lebih dulu, sehingga server minimal mengetahui bahwa skrining terjadi meski
+citranya menyusul belakangan.
 
 **Acceptance criteria:**
-- [ ] `POST /blobs/init` mengembalikan `upload_id` dan daftar chunk yang sudah diterima
-- [ ] `PUT /blobs/{upload_id}/chunks/{n}` menerima potongan dengan `Content-Range`
-- [ ] `POST /blobs/{upload_id}/complete` merakit dan memverifikasi SHA-256 keseluruhan
-- [ ] Sesi yang terputus dilanjut dari chunk terakhir yang di-ACK, bukan dari nol
+- [ ] `POST /blobs/init` menerima manifest berisi `sha256` per chunk, `sha256`
+      keseluruhan, jumlah chunk, dan ukuran chunk
+- [ ] `POST /blobs/init` mengembalikan `upload_id` beserta daftar indeks chunk yang
+      sudah tersimpan dan terverifikasi, sehingga sesi baru melanjutkan, bukan mengulang
+- [ ] `PUT /blobs/{upload_id}/chunks/{n}` memverifikasi hash chunk terhadap manifest
+      sebelum menyimpan; ketidakcocokan dijawab 422 dan chunk tidak disimpan
+- [ ] `GET /blobs/{upload_id}/status` melaporkan chunk mana yang sudah terverifikasi
+- [ ] `POST /blobs/{upload_id}/complete` memverifikasi hash keseluruhan sebagai jaring
+      pengaman; bila tidak cocok padahal semua chunk lolos, server menghitung ulang hash
+      chunk tersimpan untuk menentukan mana yang menyimpang dan meminta hanya itu
+- [ ] Sesi kedaluwarsa setelah jangka waktu tertentu dan chunk yatimnya dibersihkan
 - [ ] Antrian berprioritas: metadata mendahului citra
 - [ ] Throttling bandwidth agar tidak menghabiskan jaringan puskesmas
 - [ ] Retry memakai exponential backoff dengan jitter
 - [ ] Error diklasifikasi: 5xx di-retry, payload cacat ditandai poisoned dan dihentikan
 
 **Verification:**
-- [ ] Test: upload diputus di tengah lalu dilanjut → berkas akhir identik
-- [ ] Test: checksum tidak cocok → server meminta chunk yang rusak dikirim ulang
-- [ ] Test: chunk dikirim dua kali tidak menghasilkan duplikasi
+- [ ] Test: chunk dengan hash tidak cocok ditolak 422 dan tidak tersimpan
+- [ ] Test: upload diputus di tengah lalu dilanjut → hanya chunk yang belum ada dikirim,
+      berkas akhir identik dengan sumbernya
+- [ ] Test: chunk yang sama dikirim dua kali tidak menghasilkan duplikasi
+- [ ] Test: hash keseluruhan tidak cocok → server menyebut indeks chunk yang menyimpang
+- [ ] Test: sesi kedaluwarsa membersihkan chunk yatim
 - [ ] `pytest -q --cov` ≥ 95 %
 
 **Dependencies:** Task 6, Task 16
-**Files:** `app/api/routes/blobs.py`, `app/schemas/blob.py`, `app/services/storage.py`, `tests/test_blob_upload.py`
+**Files:** `app/api/routes/blobs.py`, `app/schemas/blob.py`, `app/models/blob_upload.py`,
+`app/services/storage.py`, `alembic/versions/`, `tests/test_blob_upload.py`
 **Ukuran:** M
 
 ---
@@ -465,27 +483,54 @@ itu latihan restore masuk sebagai kriteria, bukan sekadar catatan.
 perlu masuk, tidak ada jalur sama sekali saat ini. Diperlukan mekanisme akses darurat
 yang tidak bergantung pada jaringan.
 
-TOTP kurang tepat untuk konteks ini karena bergantung pada jam yang tersinkron,
-sementara perangkat di wilayah 3T sering beroperasi tanpa NTP dan jamnya melenceng.
-Challenge–response tidak memiliki ketergantungan itu: perangkat menampilkan kode
-tantangan, administrator menghitung jawabannya, petugas memasukkannya.
+Karena premisnya perangkat sedang offline, **verifikasi tidak mungkin dilakukan di
+backend** — backend tidak dapat dihubungi pada saat kode itu dipakai. Tanggung jawab
+karena itu terbagi: backend menyiapkan rahasia bersama saat provisioning perangkat dan
+menerima catatan audit ketika perangkat kembali online; perangkat menghasilkan
+tantangan, memverifikasi jawaban secara lokal, dan mencatat setiap pemakaian.
 
-**Acceptance criteria:**
-- [ ] Mekanisme challenge–response, bukan kode statis
-- [ ] Kode berumur pendek dan hanya berlaku satu kali
-- [ ] Setiap pemakaian tercatat di audit log beserta identitas perangkat
-- [ ] Percobaan gagal dibatasi lajunya
-- [ ] Akses dapat dicabut saat perangkat kembali online
+TOTP kurang tepat untuk konteks ini karena bergantung pada jam yang tersinkron,
+sementara perangkat di wilayah 3T sering beroperasi tanpa NTP dan jamnya melenceng
+berhari-hari. Challenge–response tidak memiliki ketergantungan itu.
+
+**Acceptance criteria — sisi backend:**
+- [ ] Rahasia bersama per perangkat dibangkitkan saat provisioning dan disimpan
+      ter-hash, tidak pernah dikembalikan dalam bentuk terang setelah pembuatan
+- [ ] Endpoint bagi `super_admin` menghitung jawaban dari kode tantangan yang
+      dibacakan petugas melalui telepon
+- [ ] Endpoint menerima unggahan catatan audit lokal saat perangkat kembali online
+- [ ] Pencabutan akses darurat dipropagasikan ke perangkat melalui jalur pull
+- [ ] Rahasia dapat dirotasi tanpa menonaktifkan perangkat
+
+**Acceptance criteria — sisi perangkat (Flutter):**
+- [ ] Perangkat membangkitkan dan menampilkan kode tantangan sekali pakai
+- [ ] Verifikasi jawaban berlangsung sepenuhnya offline terhadap rahasia bersama
+- [ ] Kode yang sudah dipakai ditolak pada percobaan berikutnya (anti-replay)
+- [ ] Percobaan gagal dibatasi lajunya secara lokal, dengan jeda yang memanjang
+- [ ] Setiap pemakaian dan setiap kegagalan tercatat di audit lokal
+- [ ] Audit lokal dan status pencabutan disinkronkan saat perangkat kembali online
+- [ ] Rahasia disimpan di penyimpanan aman perangkat, bukan sebagai teks biasa
 
 **Verification:**
 - [ ] Test: kode yang sudah dipakai ditolak pada percobaan kedua
 - [ ] Test: kode milik perangkat lain ditolak
-- [ ] Test: percobaan gagal berulang memicu pembatasan
-- [ ] `pytest -q --cov` ≥ 95 %
+- [ ] Test: percobaan gagal berulang memicu pembatasan laju
+- [ ] Test: verifikasi tetap berhasil dengan jaringan dimatikan sepenuhnya
+- [ ] Test: audit lokal terkirim utuh saat perangkat kembali online
+- [ ] Test: perangkat yang aksesnya dicabut menolak semua kode setelah sinkron berikutnya
+- [ ] `pytest -q --cov` ≥ 95 % (backend) dan test unit setara di sisi Flutter
 
-**Dependencies:** Task 16
-**Files:** `app/services/break_glass.py`, `app/api/routes/devices.py`, `app/models/audit_log.py`, `tests/test_break_glass.py`
-**Ukuran:** M
+**Dependencies:** Task 16. Membutuhkan pekerjaan paralel di repo
+`tbscreenai-mobile-frontend` — koordinasi ownership dengan Frontend Engineer.
+
+**Files — backend:** `app/services/break_glass.py`, `app/api/routes/devices.py`,
+`app/models/device.py`, `app/models/audit_log.py`, `alembic/versions/`,
+`tests/test_break_glass.py`
+
+**Files — frontend/device (repo terpisah):** layar akses darurat, service verifikasi
+lokal, penyimpanan aman rahasia, penyimpanan audit lokal, integrasi ke sync engine
+
+**Ukuran:** M (backend) + M (frontend)
 
 ---
 
@@ -514,3 +559,79 @@ sehingga privasi terjaga tanpa kehilangan ketertelusuran.
 **Dependencies:** Task 7
 **Files:** `app/services/deidentify.py`, `app/models/patient.py`, `app/api/routes/exports.py`, `alembic/versions/`, `tests/test_deidentification.py`
 **Ukuran:** M
+
+---
+
+### Task 22: Penapis citra — hanya rontgen dada yang diterima
+**Deskripsi:** Permintaan dari rapat 25 Agustus: unggahan yang jelas bukan rontgen dada
+harus ditolak, sehingga foto sembarang tidak pernah sampai ke model skrining maupun ke
+kolam data pelatihan.
+
+Validasi yang ada sekarang hanya memeriksa **apakah berkasnya benar-benar gambar** —
+magic bytes dan ukuran. Ia tidak memeriksa **gambar apa**. Foto lapangan sepak bola
+lolos sepenuhnya, lalu model mengembalikan skor kepercayaan atasnya seolah itu hasil
+skrining yang sah.
+
+Karena perangkat beroperasi offline, **penapisan harus berjalan di perangkat sebelum
+inferensi**. Penapisan di server saja tidak menyelesaikan masalah: skrining sudah
+terjadi dan hasilnya sudah tampil di layar petugas jauh sebelum data menyentuh server.
+Server tetap memeriksa ulang sebagai pertahanan berlapis, karena klien tidak pernah
+boleh dipercaya sepenuhnya.
+
+Ambangnya perlu condong permisif. Rontgen lapangan di wilayah 3T sering berkualitas
+buruk — film difoto dengan kamera, pencahayaan tidak ideal, ada pantulan cahaya.
+Penapis yang terlalu ketat menolak pasien yang sah, dan biaya kesalahan itu lebih besar
+daripada meloloskan satu foto iseng. Kasus yang meragukan sebaiknya diberi peringatan
+dan tetap dilanjutkan dengan penandaan, bukan diblokir.
+
+**Pendekatan berlapis:**
+
+*Lapis 1 — heuristik murah, tanpa model:*
+- Berkas DICOM: periksa tag `Modality` bernilai `CR`/`DX`/`DR` dan `BodyPartExamined`
+  bernilai `CHEST`. Nyaris pasti bila tersedia, dan biayanya mendekati nol.
+- Citra non-DICOM: rontgen pada dasarnya skala abu-abu. Kanal R, G, dan B yang nyaris
+  identik di seluruh citra adalah indikator kuat; saturasi tinggi menandakan foto biasa.
+- Bentuk histogram intensitas rontgen berbeda dari foto natural.
+
+*Lapis 2 — pengklasifikasi penjaga (penentu utama):*
+- Model biner ringan: "rontgen dada" versus "bukan rontgen dada"
+- Dilatih dengan rontgen dada yang sudah dimiliki sebagai kelas positif, dan himpunan
+  negatif berisi foto umum serta citra radiologi bagian tubuh lain
+- Berjalan di perangkat sebelum model utama; ukurannya beberapa megabyte
+
+*Lapis 3 — sinyal sekunder dari model utama:*
+- Entropi keluaran yang tinggi atau skor yang tidak wajar menandakan masukan di luar
+  distribusi pelatihan. Dipakai sebagai penanda tambahan, bukan penentu — jaringan
+  saraf terkenal terlalu percaya diri pada masukan yang asing baginya.
+
+**Acceptance criteria — backend:**
+- [ ] Berkas DICOM diperiksa tag modalitas dan bagian tubuh; ketidaksesuaian ditolak
+- [ ] Heuristik skala abu-abu diterapkan pada citra non-DICOM
+- [ ] Skor penjaga disimpan bersama diagnosis, sehingga keputusan penapisan dapat diaudit
+- [ ] Ambang penapis dapat dikonfigurasi dan diperlakukan sebagai konfigurasi
+      tertelusur, bukan angka yang ditanam di kode
+- [ ] Server memeriksa ulang secara mandiri; hasil penapisan dari klien tidak dipercaya
+- [ ] Citra yang ditolak tidak pernah masuk kolam data pelatihan
+
+**Acceptance criteria — perangkat dan model:**
+- [ ] Pengklasifikasi penjaga berjalan sebelum model utama, saat perangkat offline
+- [ ] Penolakan disampaikan kepada petugas dengan alasan yang dapat ditindaklanjuti
+- [ ] Kasus meragukan menampilkan peringatan namun tetap dapat dilanjutkan dengan tanda
+- [ ] Artefak penjaga didistribusikan melalui jalur yang sama dengan model utama
+
+**Verification:**
+- [ ] Test: foto natural ditolak; berkas rontgen diterima
+- [ ] Test: rontgen berkualitas rendah namun sah tetap diterima
+- [ ] Test: DICOM dengan modalitas tidak sesuai ditolak
+- [ ] Test: skor penjaga tersimpan dan dapat ditelusuri per diagnosis
+- [ ] Evaluasi dilaporkan sebagai laju penolakan keliru pada himpunan rontgen sah,
+      bukan sebagai akurasi agregat
+
+**Dependencies:** Task 7 (penyimpanan citra), Task 17 (distribusi artefak penjaga).
+Membutuhkan pengklasifikasi dari tim AI dan integrasi di sisi Flutter.
+
+**Files:** `app/services/image_validation.py`, `app/services/gatekeeper.py`,
+`app/models/diagnosis.py`, `app/core/config.py`, `alembic/versions/`,
+`tests/test_gatekeeper.py`
+
+**Ukuran:** M (backend) — ukuran sisi model dan perangkat ditentukan tim terkait
