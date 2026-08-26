@@ -53,6 +53,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
+    "empty_catalog: run without seeding the model catalog",
     # Needs a real S3 implementation on STORAGE_ENDPOINT_URL. Skips itself when
     # there is none, so `pytest` still runs with Docker stopped. Deselect
     # explicitly with -m "not integration".
