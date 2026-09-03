@@ -1,3 +1,7 @@
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -5,8 +9,36 @@ from slowapi.errors import RateLimitExceeded
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
+from app.services.storage import StorageError, get_object_storage
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Make sure the image bucket exists before the first upload arrives.
+
+    Warns rather than refuses to start, deliberately. Login, the patient list
+    and sync do not touch object storage, and taking the whole API down because
+    MinIO is thirty seconds slower to come up would trade a narrow outage for a
+    total one. The first storage call still fails loudly and specifically if
+    the problem is real, so nothing is silently swallowed — the warning here is
+    an early heads-up, not the error handling.
+    """
+    if settings.storage_auto_create_bucket:
+        try:
+            get_object_storage().ensure_bucket()
+        except StorageError:
+            logger.warning(
+                "Object storage is not reachable at startup; image endpoints "
+                "will fail until it is. Bucket: %r",
+                settings.storage_bucket,
+                exc_info=True,
+            )
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -16,6 +48,7 @@ app = FastAPI(
         "All medical data is tenant-scoped per hospital. "
         "AI inference is MOCKED in this phase."
     ),
+    lifespan=lifespan,
 )
 
 # slowapi reads the limiter off app.state. The handler is ours rather than

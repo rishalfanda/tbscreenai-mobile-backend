@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 MIN_PRODUCTION_SECRET_LENGTH = 32
 
 _DEV_SECRET_DEFAULT = "dev-only-secret-change-me-in-production"
+_DEV_STORAGE_SECRET_DEFAULT = "tbscreen_dev_storage"
 
 
 class Settings(BaseSettings):
@@ -45,6 +46,34 @@ class Settings(BaseSettings):
     # at scale stops being viable.
     login_rate_limit: str = "10/minute"
 
+    # Object storage. S3-compatible, so the endpoint is a deployment decision
+    # rather than a dependency baked into the code.
+    storage_endpoint_url: str = "http://localhost:9000"
+    storage_access_key: str = "tbscreen"
+    storage_secret_key: str = _DEV_STORAGE_SECRET_DEFAULT
+    storage_bucket: str = "tbscreen-images"
+
+    # boto3 refuses to build a client without a region even when the endpoint
+    # is not AWS. MinIO ignores the value; it exists to satisfy the signature.
+    storage_region: str = "us-east-1"
+
+    # Development convenience: the app creates its own bucket on startup so a
+    # fresh `docker compose up` needs no manual step. Deployments should turn
+    # this off — there the bucket is provisioned by whoever also sets its
+    # retention and encryption policy, and the app has no business holding
+    # CreateBucket rights.
+    storage_auto_create_bucket: bool = True
+
+    # Sent as the ServerSideEncryption header when set. Empty in development
+    # because MinIO rejects it until a key service is configured; production
+    # deployments are expected to have one.
+    storage_server_side_encryption: str | None = None
+
+    # Escape hatch for the plaintext-endpoint check below. Set it only where
+    # storage is genuinely unreachable from outside the host — and then the
+    # setting is a decision on the record rather than an oversight.
+    storage_allow_insecure_endpoint: bool = False
+
     @property
     def is_production(self) -> bool:
         return self.env == "production"
@@ -71,6 +100,21 @@ class Settings(BaseSettings):
 
         if "*" in self.cors_origins:
             problems.append("CORS_ORIGINS must list explicit origins, not '*'")
+
+        if self.storage_secret_key == _DEV_STORAGE_SECRET_DEFAULT:
+            problems.append("STORAGE_SECRET_KEY is still the development default")
+
+        # Chest X-rays cross this link. Plaintext HTTP puts them on the wire
+        # for anyone on the path, which is the one thing the approved security
+        # baseline is explicit about. STORAGE_ACCESS_KEY is deliberately not
+        # checked: it is an identifier, not a secret, and refusing a perfectly
+        # valid username would be a false alarm.
+        endpoint_is_plaintext = self.storage_endpoint_url.startswith("http://")
+        if endpoint_is_plaintext and not self.storage_allow_insecure_endpoint:
+            problems.append(
+                "STORAGE_ENDPOINT_URL is plaintext http://; use https:// or "
+                "set STORAGE_ALLOW_INSECURE_ENDPOINT=true to accept the risk"
+            )
 
         if self.database_url.startswith("sqlite"):
             problems.append("DATABASE_URL points at SQLite")
