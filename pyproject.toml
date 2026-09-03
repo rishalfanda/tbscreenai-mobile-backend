@@ -42,6 +42,13 @@ warn_unreachable = true
 module = "alembic.*"
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+# boto3 ships without type hints. The surface used here is four calls, and
+# pulling in stubs would pin the code to a client-factory pattern for very
+# little gain.
+module = ["boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

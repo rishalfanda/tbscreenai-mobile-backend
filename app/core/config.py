@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 MIN_PRODUCTION_SECRET_LENGTH = 32
 
 _DEV_SECRET_DEFAULT = "dev-only-secret-change-me-in-production"
+_DEV_STORAGE_SECRET_DEFAULT = "tbscreen_dev_storage"
 
 
 class Settings(BaseSettings):
@@ -45,6 +46,18 @@ class Settings(BaseSettings):
     # at scale stops being viable.
     login_rate_limit: str = "10/minute"
 
+    # Object storage. S3-compatible, so the endpoint is a deployment decision
+    # rather than a dependency baked into the code.
+    storage_endpoint_url: str = "http://localhost:9000"
+    storage_access_key: str = "tbscreen"
+    storage_secret_key: str = _DEV_STORAGE_SECRET_DEFAULT
+    storage_bucket: str = "tbscreen-images"
+
+    # Sent as the ServerSideEncryption header when set. Empty in development
+    # because MinIO rejects it until a key service is configured; production
+    # deployments are expected to have one.
+    storage_server_side_encryption: str | None = None
+
     @property
     def is_production(self) -> bool:
         return self.env == "production"
@@ -71,6 +84,9 @@ class Settings(BaseSettings):
 
         if "*" in self.cors_origins:
             problems.append("CORS_ORIGINS must list explicit origins, not '*'")
+
+        if self.storage_secret_key == _DEV_STORAGE_SECRET_DEFAULT:
+            problems.append("STORAGE_SECRET_KEY is still the development default")
 
         if self.database_url.startswith("sqlite"):
             problems.append("DATABASE_URL points at SQLite")

@@ -8,6 +8,10 @@ sqlalchemy~=2.0.41
 alembic~=1.16.0
 psycopg[binary]~=3.2.9
 
+# Object storage. S3-compatible, so MinIO in development and anything else in
+# deployment without touching application code.
+boto3~=1.35
+
 # Config & validation
 pydantic~=2.11.0
 pydantic-settings~=2.10.0
