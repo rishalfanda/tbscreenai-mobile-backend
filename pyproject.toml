@@ -52,6 +52,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    # Needs a real S3 implementation on STORAGE_ENDPOINT_URL. Skips itself when
+    # there is none, so `pytest` still runs with Docker stopped. Deselect
+    # explicitly with -m "not integration".
+    "integration: requires a live service, not just the app",
+]
 
 [tool.coverage.run]
 source = ["app"]
