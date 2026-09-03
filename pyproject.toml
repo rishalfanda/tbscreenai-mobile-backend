@@ -45,6 +45,7 @@ ignore_errors = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["empty_catalog: run without seeding the model catalog"]
 
 [tool.coverage.run]
 source = ["app"]

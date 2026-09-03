@@ -9,6 +9,7 @@ test; anything Postgres-specific is exercised by the migration itself.
 import os
 import uuid
 from collections.abc import Generator
+from datetime import date
 
 import bcrypt
 import pytest
@@ -32,7 +33,7 @@ from app.core.database import get_db  # noqa: E402
 from app.core.rate_limit import limiter  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Base, Hospital, User  # noqa: E402
+from app.models import Base, Hospital, ModelVersion, User  # noqa: E402
 
 
 @compiles(JSONB, "sqlite")
@@ -97,6 +98,27 @@ def hospitals(db_session: Session) -> dict[str, Hospital]:
     db_session.commit()
     return rows
 
+@pytest.fixture(autouse=True)
+def model_catalog(request, db_session: Session) -> None:
+    """/infer now resolves its version from the catalog, so the catalog has to
+    exist for the endpoint to work at all. Autouse because the alternative is
+    threading this through every test that touches inference.
+
+    Mark a test with @pytest.mark.empty_catalog to opt out — an empty catalog
+    is a real state the sync path still has to survive.
+    """
+    if request.node.get_closest_marker("empty_catalog"):
+        return
+    db_session.add(
+        ModelVersion(
+            version="v1.3.1",
+            file_size_mb=47.2,
+            release_date=date(2025, 6, 10),
+            changelog=["test seed"],
+            is_latest=True,
+        )
+    )
+    db_session.commit()
 
 @pytest.fixture
 def users(db_session: Session, hospitals: dict[str, Hospital]) -> dict[str, User]:
