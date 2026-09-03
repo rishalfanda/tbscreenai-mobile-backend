@@ -259,4 +259,4 @@ class TestMockInference:
 
         assert response.status_code == 401
 
-        
+
