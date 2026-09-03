@@ -224,7 +224,23 @@ class TestMockInference:
 
         assert inferred.status_code == 200
         assert catalogued.status_code == 200
-        assert inferred.json()["model_version"] == catalogued.json()["version"]
+        assert inferred.json()["model_version"].endswith(catalogued.json()["version"])
+
+    def test_a_mock_result_is_never_labelled_as_a_production_version(
+        self, client, headers_a
+    ):
+        """The catalogue supplies the number, but a coin flip must not be filed
+        under the name of a model that never saw the image."""
+        image = io.BytesIO(b"\x89PNG\r\n\x1a\npalsu")
+
+        response = client.post(
+            "/api/v1/diagnoses/infer",
+            headers=headers_a,
+            files={"image": ("xray.png", image, "image/png")},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["model_version"].startswith("mock-")
 
     def test_rejects_unsupported_content_type(self, client, headers_a):
         response = client.post(
@@ -242,3 +258,5 @@ class TestMockInference:
         )
 
         assert response.status_code == 401
+
+        

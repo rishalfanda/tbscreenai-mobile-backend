@@ -16,6 +16,12 @@ from app.core.config import get_settings
 from app.models.model_version import ModelVersion
 from app.schemas.diagnosis import Findings, InferenceResult
 
+# A mock verdict recorded under a bare production version name would read, in the
+# audit trail, as though model v1.3.1 actually produced it. The prefix keeps the
+# catalogue as the single source of the version while making the provenance of the
+# number unmistakable at a glance.
+MOCK_VERSION_PREFIX = "mock-"
+
 
 def latest_model_version(db: Session) -> str:
     """The one name a result may be attributed to.
@@ -26,6 +32,8 @@ def latest_model_version(db: Session) -> str:
     the model that produced it. An empty catalog is a misconfiguration rather
     than a default: serving a verdict nothing can be attributed to defeats the
     point of recording a version at all.
+    Prefixed while inference is mocked, so a stored result is never attributable
+    to a production model that did not produce it..
     """
     version = db.scalar(
         select(ModelVersion.version).where(ModelVersion.is_latest.is_(True))
@@ -38,7 +46,7 @@ def latest_model_version(db: Session) -> str:
                 "until the model catalog is populated."
             ),
         )
-    return version
+    return f"{MOCK_VERSION_PREFIX}{version}"
 
 def run_mock_inference(
     model_version: str, image_filename: str | None = None
