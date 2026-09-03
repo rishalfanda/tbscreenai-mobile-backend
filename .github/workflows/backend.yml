@@ -27,6 +27,15 @@ jobs:
       - name: Test
         # SQLite in-memory per test — no service container needed here.
         run: pytest -q --cov
+        
+      - name: Contract is current
+        # docs/openapi.json is what the Flutter client is generated from. A
+        # stale copy lets the tablet be built against a contract the server no
+        # longer honours — silently, because nothing checks. Regenerate and
+        # diff: drift fails the build instead of surfacing in the field.
+        run: |
+          python -m scripts.export_openapi
+          git diff --exit-code docs/openapi.json
 
   migrations:
     # The unit suite runs on SQLite, so JSONB, the partial unique index, and
