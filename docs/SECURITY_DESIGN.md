@@ -32,21 +32,40 @@ orang lain.
 baik foto kamera maupun berkas DICOM hasil impor.
 
 **Kunci tidak pernah tersimpan di disk.** Kunci diturunkan dari PIN petugas yang
-digabungkan dengan kunci perangkat. Penyerang yang mencabut SSD dan memasangnya di
-komputer lain hanya menemukan data acak; tidak ada berkas kunci untuk diambil.
+digabungkan dengan kunci perangkat. Penyerang yang mencabut penyimpanan dan memasangnya
+di komputer lain hanya menemukan data acak; tidak ada berkas kunci untuk diambil.
 
-**Kunci kedaluwarsa bila perangkat tidak menyinkronkan diri.** Bila perangkat tidak
-terhubung ke server melampaui batas waktu yang ditentukan, kunci lokal dinyatakan tidak
-berlaku dan data terkunci permanen. Perangkat yang hilang dan tidak pernah kembali akan
-mengunci dirinya sendiri tanpa memerlukan perintah dari siapa pun.
+**Sesi terkunci otomatis setelah perangkat tidak digunakan.** Perangkat yang ditinggal
+dalam keadaan menyala akan menutup sesinya sendiri, dan diperlukan PIN untuk membukanya
+kembali.
 
 **Citra dihapus setelah sinkronisasi berhasil**, dengan masa tenggang. Semakin sedikit
 data yang menetap di perangkat, semakin kecil kerugian bila perangkat hilang.
 
-Batasan yang perlu dinyatakan terbuka: bila perangkat dicuri dalam keadaan menyala dan
-sesi sudah terbuka, kunci berada di memori dan data dapat terbaca. Mitigasinya adalah
-penguncian otomatis setelah perangkat tidak digunakan beberapa menit. Keterbatasan ini
-berlaku pada semua sistem enkripsi penyimpanan.
+**Akses dicabut ketika perangkat kembali terhubung.** Perangkat yang dilaporkan hilang
+ditandai pada registry; begitu ia menghubungi server, aksesnya dihentikan dan data lokal
+dihapus.
+
+### Mengapa kunci tidak dibuat kedaluwarsa karena lama tidak sinkron
+
+Rancangan awal dokumen ini mengusulkan agar kunci lokal berhenti berlaku bila perangkat
+tidak menyinkronkan diri melampaui batas waktu tertentu, sehingga perangkat yang hilang
+mengunci dirinya sendiri.
+
+Usulan itu ditarik. Di wilayah 3T, perangkat dapat berada di luar jangkauan jaringan
+untuk waktu yang lama sementara masih menyimpan pemeriksaan yang belum terkirim.
+Mekanisme tersebut tidak dapat membedakan perangkat yang dicuri dari perangkat yang
+sekadar jauh dari sinyal, dan akibatnya adalah kehilangan permanen atas data pasien yang
+sah — kerugian yang lebih besar daripada risiko yang hendak dicegahnya.
+
+Penguncian sesi, enkripsi penyimpanan, penghapusan setelah sinkronisasi, dan pencabutan
+akses saat perangkat kembali terhubung memberi perlindungan yang memadai tanpa
+mempertaruhkan data yang belum sempat dikirim.
+
+Satu batasan tetap perlu dinyatakan terbuka: bila perangkat dicuri dalam keadaan menyala
+dan sesi sedang terbuka, kunci berada di memori dan data dapat terbaca. Penguncian
+otomatis mempersempit jendela itu, tetapi tidak menghapusnya. Keterbatasan ini berlaku
+pada semua sistem enkripsi penyimpanan.
 
 ---
 
@@ -82,6 +101,10 @@ Selama masa pengujian, kunci induk ditempatkan pada layanan kunci yang berjalan 
 keadaan tersegel: setelah dimulai ulang, layanan tidak dapat membuka kuncinya sendiri.
 Kunci pembuka dipecah menjadi beberapa bagian yang dipegang orang berbeda. Penyerang
 yang memperoleh salinan disk tidak mendapatkan apa pun yang dapat digunakan.
+
+Untuk tahap pengujian, encryption-at-rest bawaan object storage sudah memenuhi baseline.
+Envelope encryption per citra beserta layanan kunci tersegel tercantum sebagai pengerasan
+lanjutan, dan diterapkan bila sistem berlanjut ke produksi.
 
 Pemisahan ke mesin tersendiri direncanakan bila sistem berlanjut ke tahap produksi.
 
@@ -145,6 +168,43 @@ encryption memberi perlindungan setara terhadap kebocoran penyimpanan, tanpa mem
 siklus perbaikan model.
 
 ---
+
+## Pembagian lingkup — baseline dan pengerasan lanjutan
+
+Tidak seluruh lapisan di atas merupakan prasyarat penyimpanan awal. Sebagian adalah
+arah pengembangan bila sistem berlanjut ke tahap produksi komersial. Pemisahan ini
+dinyatakan eksplisit agar implementasi tidak tertunda menunggu hal yang belum
+diperlukan.
+
+### Baseline — prasyarat sebelum citra pertama disimpan
+
+| Kontrol | Lapis |
+|---|---|
+| Enkripsi penyimpanan pada perangkat | 1 |
+| Penguncian sesi otomatis | 1 |
+| Penghapusan citra setelah sinkronisasi berhasil | 1 |
+| HTTPS untuk seluruh perpindahan data | 2 |
+| Encryption-at-rest pada object storage | 3 |
+| De-identifikasi berkas DICOM | 4 |
+| Kontrol akses berbasis peran | 5 |
+| Jejak audit atas akses data | 5 |
+| Cadangan data | 5 |
+| Masa retensi yang dapat dikonfigurasi | — |
+
+### Pengerasan lanjutan — bila berlanjut ke produksi
+
+| Kontrol | Alasan ditunda |
+|---|---|
+| Kunci data unik per citra dengan pembungkusan berlapis | Encryption-at-rest sudah memenuhi kebutuhan pengujian |
+| Layanan kunci tersegel | Memerlukan prosedur operasional yang belum ada |
+| Pembagian kunci pembuka ke beberapa orang | Bergantung pada pembagian peran yang belum ditetapkan |
+| Pemisahan layanan kunci ke mesin tersendiri | Bergantung pada keputusan arsitektur penempatan |
+| Chip keamanan perangkat keras pada perangkat | Ketersediaan komponen belum dikonfirmasi |
+
+Pemisahan ini tidak mengurangi perlindungan pada tahap pengujian. Baseline sudah
+memastikan bahwa perangkat yang hilang tidak terbaca, data yang berpindah terenkripsi,
+citra tersimpan dalam keadaan terenkripsi, dan identitas pasien tidak melekat pada citra.
+
 
 ## Retensi data
 
