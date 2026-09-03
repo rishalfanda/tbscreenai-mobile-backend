@@ -309,3 +309,423 @@ Rate limit `slowapi` dihitung per-proses, jadi N worker = N kali budget.
 - [ ] Nol jalur kode yang bisa menghasilkan vonis TB acak
 - [ ] Kebijakan retensi citra terjawab dan terimplementasi
 - [ ] Siap tinjauan klinis
+
+---
+
+## Fase E — Lingkup Backend Engineer (usulan)
+
+Turunan dari arahan Pak Wahyono dan Mas Risha pada rapat 24 Agustus 2026.
+Task-task ini adalah mandat langsung yang belum tercatat di plan.md.
+
+Catatan urutan: Task 16 adalah fondasi — Task 17 dan 18 bergantung padanya.
+Ditaruh di akhir agar penomoran Fase A–D tidak bergeser; silakan diatur ulang
+kalau lebih baik disisipkan sesuai graf dependensi.
+
+---
+
+### Task 16: Device Registry
+**Deskripsi:** `sync_logs.device_id` bertipe `String(100)`, nullable, dan tidak
+terhubung ke tabel mana pun. Perangkat tidak pernah diregistrasi, sehingga server
+tidak dapat menjawab tiga pertanyaan yang menentukan operasional lapangan: perangkat
+mana yang masih memakai model versi lama, perangkat mana yang belum sinkron
+berhari-hari, dan perangkat mana yang harus di-rollback bila rilis model bermasalah.
+Tanpa registry, rollout model bertahap dan pencabutan akses perangkat hilang tidak
+mungkin dilakukan.
+
+Aturan relasi dari Pak Wahyono: satu rumah sakit boleh mengoperasikan dua perangkat
+atau lebih, tetapi satu perangkat tidak pernah melayani dua rumah sakit. Aturan itu
+diterjemahkan menjadi foreign key non-nullable dari `devices` ke `hospitals`.
+
+Pengenal perangkat memakai **MAC address**, sesuai arahan Pak Wahyono. Pilihan ini
+tepat karena MAC sudah melekat di perangkat, tidak memerlukan langkah pembuatan
+identitas terpisah, dan dapat dicetak pada label unit sehingga memudahkan dukungan
+lapangan.
+
+Namun MAC address bukan rahasia. Ia terlihat oleh siapa pun pada jaringan yang sama
+dan dapat diubah dari sistem operasi. MAC karena itu menjawab pertanyaan "perangkat
+mana ini", bukan "benarkah ini perangkat tersebut". Registry menyimpan keduanya
+secara terpisah: MAC sebagai pengenal publik, dan kredensial ter-hash yang diterbitkan
+sekali saat pendaftaran sebagai dasar autentikasi. Setiap permintaan sinkronisasi
+membawa kredensial, bukan MAC.
+
+Raspberry Pi 5 memiliki dua antarmuka jaringan dengan MAC berbeda. Satu harus
+ditetapkan sebagai kanonik, karena bila tidak, perangkat yang sinkron lewat kabel dan
+lewat nirkabel akan terbaca sebagai dua perangkat berbeda. Antarmuka Ethernet dipilih
+karena alamatnya tertanam permanen pada chip.
+
+**Acceptance criteria:**
+- [ ] Tabel `devices` dengan `mac_address` unik dan `hospital_id` FK non-nullable
+- [ ] MAC disimpan ternormalisasi — huruf kecil, pemisah titik dua — sehingga
+      `AA:BB:CC` dan `aa-bb-cc` tidak menjadi dua baris berbeda
+- [ ] Antarmuka Ethernet ditetapkan sebagai sumber MAC kanonik dan didokumentasikan
+- [ ] Kolom `credential_hash` terpisah dari MAC; kredensial diterbitkan sekali saat
+      pendaftaran dan tidak pernah dikembalikan dalam bentuk terang sesudahnya
+- [ ] Kolom status siklus hidup: `pending | active | suspended | decommissioned`
+- [ ] `sync_logs.device_id` menjadi FK ke `devices.id`, dengan migrasi data lama
+- [ ] `POST /devices` pendaftaran dengan MAC — khusus `super_admin`
+- [ ] `GET /devices` — `admin_rs` hanya melihat perangkat rumah sakitnya
+- [ ] `POST /devices/{id}/revoke` mencabut akses perangkat hilang
+- [ ] `POST /devices/{id}/rebind-mac` mengikat MAC baru ke record yang sama bila
+      papan diganti, dengan alasan dan pencatatan audit
+- [ ] `GET /devices/fleet-status` melaporkan versi model, waktu sinkron terakhir, dan
+      sisa daya baterai yang dilaporkan modul INA226
+
+**Verification:**
+- [ ] Test: kredensial perangkat RS A ditolak saat dipakai untuk data RS B
+- [ ] Test: perangkat yang dicabut tidak bisa lagi melakukan sync push
+- [ ] Test: MAC dengan format berbeda menunjuk ke satu record yang sama
+- [ ] Test: MAC yang benar tanpa kredensial sah tetap ditolak
+- [ ] Test: `hospital_id` tidak boleh null pada level database
+- [ ] Test: rebind MAC tercatat di audit beserta nilai lama dan baru
+- [ ] `alembic downgrade -1 && alembic upgrade head` berjalan bersih
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Dependencies:** None
+**Files:** `app/models/device.py`, `app/models/sync_log.py`, `app/schemas/device.py`, `app/api/routes/devices.py`, `app/api/deps.py`, `alembic/versions/`, `tests/test_devices.py`
+**Ukuran:** L
+
+---
+
+### Task 17: Distribusi artefak model ke perangkat
+**Deskripsi:** `model_versions.download_url` bertipe nullable dan tidak pernah diisi,
+termasuk di `scripts/seed.py`. Yang tersedia sekarang adalah *pengecekan versi*, bukan
+*transfer model*: server dapat memberitahu bahwa v1.3.1 berukuran 47,2 MB tersedia,
+lalu perangkat bertanya "unduh dari mana" dan jawabannya kosong. Di sisi Flutter,
+`ModelUpdateCard` sudah memiliki state machine idle → checking → updateAvailable
+beserta indikator progres unduhan — rangkanya siap, mesinnya belum ada.
+
+Katalog juga belum memuat cara memverifikasi artefak. Tanpa checksum, artefak yang
+rusak separuh saat diunduh di jaringan 3T tidak akan terdeteksi. Tanpa tanda tangan,
+kanal update model menjadi jalur injeksi perilaku ke alat kesehatan: siapa pun yang
+dapat mendorong artefak palsu ke perangkat sedang mengubah hasil skrining pasien.
+
+Selain itu `is_latest` tidak memiliki constraint keunikan. Dua baris dapat sama-sama
+bernilai `True`, dan `db.scalar()` di `app/api/routes/sync.py` akan mengembalikan
+salah satunya secara acak tanpa menimbulkan error — perangkat yang berbeda bisa
+mengunduh artefak yang berbeda tanpa ada yang menyadari.
+
+**Acceptance criteria:**
+- [ ] Kolom baru di `model_versions`: `sha256`, `signature`, `artifact_key`, `min_app_version`, `target_hardware`
+- [ ] Partial unique index memastikan hanya satu baris `is_latest = true`
+- [ ] Artefak disimpan di object storage, bukan sebagai kolom biner di database
+- [ ] Endpoint penyaji artefak mengembalikan presigned URL berumur pendek
+- [ ] Unduhan bersifat resumable — putus di tengah dilanjut, bukan diulang dari nol
+- [ ] Perangkat memverifikasi checksum **dan** tanda tangan sebelum artefak diaktifkan
+- [ ] Pergantian artefak bersifat atomik, diikuti health check, dan otomatis rollback ke versi sebelumnya bila gagal
+- [ ] Rollout bertahap per cohort perangkat (10 % → 50 % → 100 %)
+- [ ] Setiap hasil inferensi mencatat versi artefak, bukan hanya versi model logis
+
+**Verification:**
+- [ ] Test: dua baris `is_latest = true` ditolak di level database
+- [ ] Test: artefak dengan checksum tidak cocok ditolak dan tidak pernah diaktifkan
+- [ ] Test: perangkat yang tertinggal beberapa versi langsung menerima versi terbaru, tidak berurutan satu per satu
+- [ ] Test: perangkat di luar cohort canary tetap menerima versi lama
+- [ ] `alembic downgrade -1 && alembic upgrade head` berjalan bersih
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Dependencies:** Task 6 (object storage), Task 16 (registry perangkat untuk cohort dan rollback)
+**Files:** `app/models/model_version.py`, `app/schemas/model_version.py`, `app/api/routes/sync.py`, `app/services/storage.py`, `alembic/versions/`, `scripts/seed.py`, `tests/test_model_distribution.py`
+**Ukuran:** L
+
+---
+
+### Task 18: Upload citra chunked & resumable
+**Deskripsi:** Sinkronisasi saat ini hanya menangani record; citra belum punya jalur
+sinkronisasi sama sekali. Rontgen berukuran megabyte, dan perangkat beroperasi di
+wilayah dengan konektivitas terputus-putus. Upload sekali kirim berarti kegagalan di
+detik terakhir memaksa mengulang dari nol — pada jaringan 3T, citra semacam itu
+berpotensi tidak pernah terkirim sama sekali.
+
+Verifikasi integritas dilakukan **saat chunk tiba**, bukan setelah perakitan. Hash
+keseluruhan hanya dapat membuktikan bahwa berkas akhir rusak; ia tidak dapat menunjuk
+chunk mana yang harus dikirim ulang, sehingga satu-satunya pemulihan yang tersisa
+adalah mengulang seluruh unggahan. Karena itu klien menyertakan manifest berisi hash
+setiap chunk pada awal sesi, dan server menolak chunk yang tidak cocok seketika —
+kesalahan terdeteksi pada potongan berukuran megabyte, bukan pada berkas utuh.
+
+Metadata dan citra juga dipisahkan jalurnya. Metadata berukuran kilobyte dan harus
+lolos lebih dulu, sehingga server minimal mengetahui bahwa skrining terjadi meski
+citranya menyusul belakangan.
+
+**Acceptance criteria:**
+- [ ] `POST /blobs/init` menerima manifest berisi `sha256` per chunk, `sha256`
+      keseluruhan, jumlah chunk, dan ukuran chunk
+- [ ] `POST /blobs/init` mengembalikan `upload_id` beserta daftar indeks chunk yang
+      sudah tersimpan dan terverifikasi, sehingga sesi baru melanjutkan, bukan mengulang
+- [ ] `PUT /blobs/{upload_id}/chunks/{n}` memverifikasi hash chunk terhadap manifest
+      sebelum menyimpan; ketidakcocokan dijawab 422 dan chunk tidak disimpan
+- [ ] `GET /blobs/{upload_id}/status` melaporkan chunk mana yang sudah terverifikasi
+- [ ] `POST /blobs/{upload_id}/complete` memverifikasi hash keseluruhan sebagai jaring
+      pengaman; bila tidak cocok padahal semua chunk lolos, server menghitung ulang hash
+      chunk tersimpan untuk menentukan mana yang menyimpang dan meminta hanya itu
+- [ ] Sesi kedaluwarsa setelah jangka waktu tertentu dan chunk yatimnya dibersihkan
+- [ ] Antrian berprioritas: metadata mendahului citra
+- [ ] Throttling bandwidth agar tidak menghabiskan jaringan puskesmas
+- [ ] Retry memakai exponential backoff dengan jitter
+- [ ] Error diklasifikasi: 5xx di-retry, payload cacat ditandai poisoned dan dihentikan
+
+**Verification:**
+- [ ] Test: chunk dengan hash tidak cocok ditolak 422 dan tidak tersimpan
+- [ ] Test: upload diputus di tengah lalu dilanjut → hanya chunk yang belum ada dikirim,
+      berkas akhir identik dengan sumbernya
+- [ ] Test: chunk yang sama dikirim dua kali tidak menghasilkan duplikasi
+- [ ] Test: hash keseluruhan tidak cocok → server menyebut indeks chunk yang menyimpang
+- [ ] Test: sesi kedaluwarsa membersihkan chunk yatim
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Dependencies:** Task 6, Task 16
+**Files:** `app/api/routes/blobs.py`, `app/schemas/blob.py`, `app/models/blob_upload.py`,
+`app/services/storage.py`, `alembic/versions/`, `tests/test_blob_upload.py`
+**Ukuran:** M
+
+---
+
+### Task 19: Backup server dan pemulihan terverifikasi
+**Deskripsi:** Belum ada mekanisme backup sama sekali. "Backup" dan "sinkronisasi"
+adalah dua hal berbeda dan keduanya diminta: sinkronisasi memindahkan data lapangan
+ke server, backup melindungi server itu sendiri dari kehilangan data.
+
+Backup yang tidak pernah diuji pemulihannya bukan backup, melainkan asumsi. Karena
+itu latihan restore masuk sebagai kriteria, bukan sekadar catatan.
+
+**Acceptance criteria:**
+- [ ] Postgres WAL archiving aktif dengan point-in-time recovery
+- [ ] Backup object storage terjadwal
+- [ ] Berkas backup terenkripsi, kuncinya disimpan terpisah dari backup
+- [ ] Katalog `model_versions` ikut ter-backup, sehingga hasil skrining lama tetap dapat ditelusuri ke artefak yang menghasilkannya
+- [ ] Kebijakan retensi backup terdokumentasi
+
+**Verification:**
+- [ ] Latihan restore ke instance kosong berhasil dan datanya utuh
+- [ ] Point-in-time recovery ke satu jam sebelumnya berhasil
+- [ ] Prosedur restore terdokumentasi dan dapat diikuti orang lain
+
+**Dependencies:** Task 6
+**Files:** `docker-compose.prod.yml`, `docs/BACKUP_RECOVERY.md`, `scripts/backup.sh`
+**Ukuran:** M
+
+---
+
+### Task 20: Akses admin darurat saat perangkat offline
+**Deskripsi:** Bila perangkat berada di lokasi tanpa konektivitas dan administrator
+perlu masuk, tidak ada jalur sama sekali saat ini. Diperlukan mekanisme akses darurat
+yang tidak bergantung pada jaringan.
+
+Karena premisnya perangkat sedang offline, **verifikasi tidak mungkin dilakukan di
+backend** — backend tidak dapat dihubungi pada saat kode itu dipakai. Tanggung jawab
+karena itu terbagi: backend menyiapkan rahasia bersama saat provisioning perangkat dan
+menerima catatan audit ketika perangkat kembali online; perangkat menghasilkan
+tantangan, memverifikasi jawaban secara lokal, dan mencatat setiap pemakaian.
+
+TOTP kurang tepat untuk konteks ini karena bergantung pada jam yang tersinkron,
+sementara perangkat di wilayah 3T sering beroperasi tanpa NTP dan jamnya melenceng
+berhari-hari. Challenge–response tidak memiliki ketergantungan itu.
+
+**Acceptance criteria — sisi backend:**
+- [ ] Rahasia bersama per perangkat dibangkitkan saat provisioning dan disimpan
+      ter-hash, tidak pernah dikembalikan dalam bentuk terang setelah pembuatan
+- [ ] Endpoint bagi `super_admin` menghitung jawaban dari kode tantangan yang
+      dibacakan petugas melalui telepon
+- [ ] Endpoint menerima unggahan catatan audit lokal saat perangkat kembali online
+- [ ] Pencabutan akses darurat dipropagasikan ke perangkat melalui jalur pull
+- [ ] Rahasia dapat dirotasi tanpa menonaktifkan perangkat
+
+**Acceptance criteria — sisi perangkat (Flutter):**
+- [ ] Perangkat membangkitkan dan menampilkan kode tantangan sekali pakai
+- [ ] Verifikasi jawaban berlangsung sepenuhnya offline terhadap rahasia bersama
+- [ ] Kode yang sudah dipakai ditolak pada percobaan berikutnya (anti-replay)
+- [ ] Percobaan gagal dibatasi lajunya secara lokal, dengan jeda yang memanjang
+- [ ] Setiap pemakaian dan setiap kegagalan tercatat di audit lokal
+- [ ] Audit lokal dan status pencabutan disinkronkan saat perangkat kembali online
+- [ ] Rahasia disimpan di penyimpanan aman perangkat, bukan sebagai teks biasa
+
+**Verification:**
+- [ ] Test: kode yang sudah dipakai ditolak pada percobaan kedua
+- [ ] Test: kode milik perangkat lain ditolak
+- [ ] Test: percobaan gagal berulang memicu pembatasan laju
+- [ ] Test: verifikasi tetap berhasil dengan jaringan dimatikan sepenuhnya
+- [ ] Test: audit lokal terkirim utuh saat perangkat kembali online
+- [ ] Test: perangkat yang aksesnya dicabut menolak semua kode setelah sinkron berikutnya
+- [ ] `pytest -q --cov` ≥ 95 % (backend) dan test unit setara di sisi Flutter
+
+**Dependencies:** Task 16. Membutuhkan pekerjaan paralel di repo
+`tbscreenai-mobile-frontend` — koordinasi ownership dengan Frontend Engineer.
+
+**Files — backend:** `app/services/break_glass.py`, `app/api/routes/devices.py`,
+`app/models/device.py`, `app/models/audit_log.py`, `alembic/versions/`,
+`tests/test_break_glass.py`
+
+**Files — frontend/device (repo terpisah):** layar akses darurat, service verifikasi
+lokal, penyimpanan aman rahasia, penyimpanan audit lokal, integrasi ke sync engine
+
+**Ukuran:** M (backend) + M (frontend)
+
+---
+
+### Task 21: De-identifikasi PHI sebelum data masuk kolam pelatihan
+**Deskripsi:** Forum diseminasi merekomendasikan validasi lanjutan hingga 40.000 citra,
+dan citra itu akan datang dari lapangan. Data pasien tidak boleh berpindah ke kolam
+pelatihan dalam bentuk teridentifikasi.
+
+Jawaban yang tepat bukan mengeluarkan record pasien dari sinkronisasi — citra tanpa
+record tidak dapat diaudit secara klinis dan tidak bernilai sebagai data pelatihan.
+Yang tepat adalah membuang atribut identitas dan menyimpan pseudonim sebagai penghubung,
+sehingga privasi terjaga tanpa kehilangan ketertelusuran.
+
+**Acceptance criteria:**
+- [ ] Tag PHI pada berkas DICOM dihapus sebelum data masuk kolam pelatihan
+- [ ] Pemetaan pseudonim ke identitas asli disimpan terpisah dengan kontrol akses berbeda
+- [ ] Flag consent per pasien menentukan boleh atau tidaknya data dipakai untuk pelatihan
+- [ ] Data tanpa consent tidak pernah masuk kolam pelatihan
+- [ ] Pencabutan consent memicu penghapusan dari kolam pelatihan
+
+**Verification:**
+- [ ] Test: berkas DICOM hasil de-identifikasi tidak lagi memuat tag identitas
+- [ ] Test: pasien tanpa consent tidak muncul di ekspor data pelatihan
+- [ ] Test: pencabutan consent menghapus data terkait
+
+**Dependencies:** Task 7
+**Files:** `app/services/deidentify.py`, `app/models/patient.py`, `app/api/routes/exports.py`, `alembic/versions/`, `tests/test_deidentification.py`
+**Ukuran:** M
+
+---
+
+### Task 22: Penapis citra — hanya rontgen dada yang diterima
+**Deskripsi:** Permintaan dari rapat 25 Agustus: unggahan yang jelas bukan rontgen dada
+harus ditolak, sehingga foto sembarang tidak pernah sampai ke model skrining maupun ke
+kolam data pelatihan.
+
+Validasi yang ada sekarang hanya memeriksa **apakah berkasnya benar-benar gambar** —
+magic bytes dan ukuran. Ia tidak memeriksa **gambar apa**. Foto lapangan sepak bola
+lolos sepenuhnya, lalu model mengembalikan skor kepercayaan atasnya seolah itu hasil
+skrining yang sah.
+
+Karena perangkat beroperasi offline, **penapisan harus berjalan di perangkat sebelum
+inferensi**. Penapisan di server saja tidak menyelesaikan masalah: skrining sudah
+terjadi dan hasilnya sudah tampil di layar petugas jauh sebelum data menyentuh server.
+Server tetap memeriksa ulang sebagai pertahanan berlapis, karena klien tidak pernah
+boleh dipercaya sepenuhnya.
+
+Ambangnya perlu condong permisif. Rontgen lapangan di wilayah 3T sering berkualitas
+buruk — film difoto dengan kamera, pencahayaan tidak ideal, ada pantulan cahaya.
+Penapis yang terlalu ketat menolak pasien yang sah, dan biaya kesalahan itu lebih besar
+daripada meloloskan satu foto iseng. Kasus yang meragukan sebaiknya diberi peringatan
+dan tetap dilanjutkan dengan penandaan, bukan diblokir.
+
+**Pendekatan berlapis:**
+
+*Lapis 1 — heuristik murah, tanpa model:*
+- Berkas DICOM: periksa tag `Modality` bernilai `CR`/`DX`/`DR` dan `BodyPartExamined`
+  bernilai `CHEST`. Nyaris pasti bila tersedia, dan biayanya mendekati nol.
+- Citra non-DICOM: rontgen pada dasarnya skala abu-abu. Kanal R, G, dan B yang nyaris
+  identik di seluruh citra adalah indikator kuat; saturasi tinggi menandakan foto biasa.
+- Bentuk histogram intensitas rontgen berbeda dari foto natural.
+
+*Lapis 2 — pengklasifikasi penjaga (penentu utama):*
+- Model biner ringan: "rontgen dada" versus "bukan rontgen dada"
+- Dilatih dengan rontgen dada yang sudah dimiliki sebagai kelas positif, dan himpunan
+  negatif berisi foto umum serta citra radiologi bagian tubuh lain
+- Berjalan di perangkat sebelum model utama; ukurannya beberapa megabyte
+
+*Lapis 3 — sinyal sekunder dari model utama:*
+- Entropi keluaran yang tinggi atau skor yang tidak wajar menandakan masukan di luar
+  distribusi pelatihan. Dipakai sebagai penanda tambahan, bukan penentu — jaringan
+  saraf terkenal terlalu percaya diri pada masukan yang asing baginya.
+
+**Acceptance criteria — backend:**
+- [ ] Berkas DICOM diperiksa tag modalitas dan bagian tubuh; ketidaksesuaian ditolak
+- [ ] Heuristik skala abu-abu diterapkan pada citra non-DICOM
+- [ ] Skor penjaga disimpan bersama diagnosis, sehingga keputusan penapisan dapat diaudit
+- [ ] Ambang penapis dapat dikonfigurasi dan diperlakukan sebagai konfigurasi
+      tertelusur, bukan angka yang ditanam di kode
+- [ ] Server memeriksa ulang secara mandiri; hasil penapisan dari klien tidak dipercaya
+- [ ] Citra yang ditolak tidak pernah masuk kolam data pelatihan
+
+**Acceptance criteria — perangkat dan model:**
+- [ ] Pengklasifikasi penjaga berjalan sebelum model utama, saat perangkat offline
+- [ ] Penolakan disampaikan kepada petugas dengan alasan yang dapat ditindaklanjuti
+- [ ] Kasus meragukan menampilkan peringatan namun tetap dapat dilanjutkan dengan tanda
+- [ ] Artefak penjaga didistribusikan melalui jalur yang sama dengan model utama
+
+**Verification:**
+- [ ] Test: foto natural ditolak; berkas rontgen diterima
+- [ ] Test: rontgen berkualitas rendah namun sah tetap diterima
+- [ ] Test: DICOM dengan modalitas tidak sesuai ditolak
+- [ ] Test: skor penjaga tersimpan dan dapat ditelusuri per diagnosis
+- [ ] Evaluasi dilaporkan sebagai laju penolakan keliru pada himpunan rontgen sah,
+      bukan sebagai akurasi agregat
+
+**Dependencies:** Task 7 (penyimpanan citra), Task 17 (distribusi artefak penjaga).
+Membutuhkan pengklasifikasi dari tim AI dan integrasi di sisi Flutter.
+
+**Files:** `app/services/image_validation.py`, `app/services/gatekeeper.py`,
+`app/models/diagnosis.py`, `app/core/config.py`, `alembic/versions/`,
+`tests/test_gatekeeper.py`
+
+**Ukuran:** M (backend) — ukuran sisi model dan perangkat ditentukan tim terkait
+
+---
+
+### Task 23: Impor berkas DICOM dari media USB
+**Deskripsi:** Rancangan perangkat keras memuat flash drive 32 GB sebagai **jalur
+masukan**: berkas DICOM dari mesin X-ray digital dibawa ke tablet melalui media itu
+untuk diproses. Ini melengkapi jalur kamera, yang memotret film fisik.
+
+Kedua jalur berbeda sifatnya. Foto kamera berukuran sekitar tiga sampai enam megabyte
+dan tidak membawa identitas pasien. Berkas DICOM jauh lebih besar dan **membawa
+identitas pasien di dalam header** — nama, tanggal lahir, nomor rekam medis, nama
+institusi. Perbedaan itu menentukan penanganan keduanya.
+
+Proporsi antara kedua jalur tidak tetap dan bergantung pada praktik masing-masing
+fasilitas, sehingga sistem harus menangani keduanya sama baiknya tanpa mengasumsikan
+salah satunya dominan.
+
+Media dicolokkan oleh petugas puskesmas, bukan oleh tenaga teknis. Flash drive yang
+sama kemungkinan pernah dipakai di komputer lain dan isinya tidak terverifikasi. Media
+lepasan yang tidak dipercaya merupakan jalur serangan yang dikenal luas, dan alat ini
+adalah perangkat kesehatan. Pembatasan pada titik masuk karena itu menjadi bagian
+dari task ini, bukan catatan tambahan.
+
+**Acceptance criteria — pengerasan titik masuk:**
+- [ ] Media dipasang **hanya-baca**, dengan opsi `noexec`, `nosuid`, dan `nodev`
+- [ ] Hanya berkas yang cocok pola yang diharapkan dibaca; isi media tidak dipindai
+      menyeluruh
+- [ ] Magic bytes DICOM diverifikasi sebelum berkas diurai, mengikuti pola yang sudah
+      dipakai pada validasi unggahan
+- [ ] Batas jumlah berkas dan ukuran total per sesi impor
+- [ ] Tidak ada berkas dari media yang pernah dieksekusi
+- [ ] Setiap sesi impor tercatat di audit: waktu, petugas, jumlah berkas, hasil
+
+**Acceptance criteria — pemrosesan:**
+- [ ] Tag `Modality` bernilai `CR`, `DX`, atau `DR` dan `BodyPartExamined` bernilai
+      `CHEST` diverifikasi; ketidaksesuaian ditolak dengan alasan yang dapat dipahami
+      petugas
+- [ ] Tag identitas pasien dihapus sebelum berkas disimpan, dan pseudonim dipakai
+      sebagai penghubung
+- [ ] Berkas asli dan hasil pemeriksaan sama-sama disimpan, sesuai keputusan tim
+      perangkat keras
+- [ ] Kebijakan penghapusan lokal setelah sinkronisasi berhasil, mengingat kapasitas
+      SSD terbatas dan berkas DICOM jauh lebih besar daripada foto kamera
+- [ ] Impor bersifat idempoten; media yang sama dicolokkan dua kali tidak menghasilkan
+      pemeriksaan ganda
+
+**Verification:**
+- [ ] Test: berkas bukan DICOM pada media diabaikan tanpa menghentikan sesi impor
+- [ ] Test: DICOM dengan modalitas tidak sesuai ditolak
+- [ ] Test: berkas hasil impor tidak lagi memuat tag identitas pasien
+- [ ] Test: media yang sama diimpor dua kali menghasilkan satu pemeriksaan
+- [ ] Test: sesi impor tercatat di audit secara lengkap
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Pertanyaan terbuka:** bentuk data dari mesin X-ray di lapangan belum diketahui —
+apakah satu berkas DICOM per pemeriksaan, atau folder DICOMDIR berisi beberapa seri.
+Keduanya memerlukan implementasi yang berbeda. Perlu dikonfirmasi ke pihak yang
+pernah mengoperasikan mesin di Balkesmas Klaten atau RSUD Mimika.
+
+**Dependencies:** Task 7 (penyimpanan citra), Task 21 (de-identifikasi).
+Sebagian besar antarmuka impor berada di sisi perangkat — perlu kesepakatan ownership
+dengan Frontend Engineer.
+
+**Files:** `app/services/dicom_import.py`, `app/services/deidentify.py`, `app/services/image_validation.py`, `app/api/routes/imports.py`, `app/models/audit_log.py`, `tests/test_dicom_import.py`
+
+**Ukuran:** M (backend) + M (perangkat)
