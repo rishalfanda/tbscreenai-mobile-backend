@@ -326,29 +326,57 @@ kalau lebih baik disisipkan sesuai graf dependensi.
 ### Task 16: Device Registry
 **Deskripsi:** `sync_logs.device_id` bertipe `String(100)`, nullable, dan tidak
 terhubung ke tabel mana pun. Perangkat tidak pernah diregistrasi, sehingga server
-tidak bisa menjawab tiga pertanyaan yang menentukan operasional lapangan: perangkat
-mana yang masih memakai model versi lama, perangkat mana yang belum sinkron berhari-hari,
-dan perangkat mana yang harus di-rollback bila rilis model bermasalah. Tanpa registry,
-rollout model bertahap dan pencabutan akses perangkat hilang tidak mungkin dilakukan.
+tidak dapat menjawab tiga pertanyaan yang menentukan operasional lapangan: perangkat
+mana yang masih memakai model versi lama, perangkat mana yang belum sinkron
+berhari-hari, dan perangkat mana yang harus di-rollback bila rilis model bermasalah.
+Tanpa registry, rollout model bertahap dan pencabutan akses perangkat hilang tidak
+mungkin dilakukan.
 
 Aturan relasi dari Pak Wahyono: satu rumah sakit boleh mengoperasikan dua perangkat
 atau lebih, tetapi satu perangkat tidak pernah melayani dua rumah sakit. Aturan itu
 diterjemahkan menjadi foreign key non-nullable dari `devices` ke `hospitals`.
 
+Pengenal perangkat memakai **MAC address**, sesuai arahan Pak Wahyono. Pilihan ini
+tepat karena MAC sudah melekat di perangkat, tidak memerlukan langkah pembuatan
+identitas terpisah, dan dapat dicetak pada label unit sehingga memudahkan dukungan
+lapangan.
+
+Namun MAC address bukan rahasia. Ia terlihat oleh siapa pun pada jaringan yang sama
+dan dapat diubah dari sistem operasi. MAC karena itu menjawab pertanyaan "perangkat
+mana ini", bukan "benarkah ini perangkat tersebut". Registry menyimpan keduanya
+secara terpisah: MAC sebagai pengenal publik, dan kredensial ter-hash yang diterbitkan
+sekali saat pendaftaran sebagai dasar autentikasi. Setiap permintaan sinkronisasi
+membawa kredensial, bukan MAC.
+
+Raspberry Pi 5 memiliki dua antarmuka jaringan dengan MAC berbeda. Satu harus
+ditetapkan sebagai kanonik, karena bila tidak, perangkat yang sinkron lewat kabel dan
+lewat nirkabel akan terbaca sebagai dua perangkat berbeda. Antarmuka Ethernet dipilih
+karena alamatnya tertanam permanen pada chip.
+
 **Acceptance criteria:**
-- [ ] Tabel `devices` dengan `device_code` unik dan `hospital_id` FK non-nullable
+- [ ] Tabel `devices` dengan `mac_address` unik dan `hospital_id` FK non-nullable
+- [ ] MAC disimpan ternormalisasi — huruf kecil, pemisah titik dua — sehingga
+      `AA:BB:CC` dan `aa-bb-cc` tidak menjadi dua baris berbeda
+- [ ] Antarmuka Ethernet ditetapkan sebagai sumber MAC kanonik dan didokumentasikan
+- [ ] Kolom `credential_hash` terpisah dari MAC; kredensial diterbitkan sekali saat
+      pendaftaran dan tidak pernah dikembalikan dalam bentuk terang sesudahnya
 - [ ] Kolom status siklus hidup: `pending | active | suspended | decommissioned`
 - [ ] `sync_logs.device_id` menjadi FK ke `devices.id`, dengan migrasi data lama
-- [ ] `POST /devices` provisioning — khusus `super_admin`
+- [ ] `POST /devices` pendaftaran dengan MAC — khusus `super_admin`
 - [ ] `GET /devices` — `admin_rs` hanya melihat perangkat rumah sakitnya
 - [ ] `POST /devices/{id}/revoke` mencabut akses perangkat hilang
-- [ ] Perangkat memiliki kredensial sendiri, terpisah dari JWT dokter
-- [ ] `GET /devices/fleet-status` melaporkan versi model dan waktu sinkron terakhir
+- [ ] `POST /devices/{id}/rebind-mac` mengikat MAC baru ke record yang sama bila
+      papan diganti, dengan alasan dan pencatatan audit
+- [ ] `GET /devices/fleet-status` melaporkan versi model, waktu sinkron terakhir, dan
+      sisa daya baterai yang dilaporkan modul INA226
 
 **Verification:**
 - [ ] Test: kredensial perangkat RS A ditolak saat dipakai untuk data RS B
 - [ ] Test: perangkat yang dicabut tidak bisa lagi melakukan sync push
+- [ ] Test: MAC dengan format berbeda menunjuk ke satu record yang sama
+- [ ] Test: MAC yang benar tanpa kredensial sah tetap ditolak
 - [ ] Test: `hospital_id` tidak boleh null pada level database
+- [ ] Test: rebind MAC tercatat di audit beserta nilai lama dan baru
 - [ ] `alembic downgrade -1 && alembic upgrade head` berjalan bersih
 - [ ] `pytest -q --cov` ≥ 95 %
 
@@ -635,3 +663,69 @@ Membutuhkan pengklasifikasi dari tim AI dan integrasi di sisi Flutter.
 `tests/test_gatekeeper.py`
 
 **Ukuran:** M (backend) — ukuran sisi model dan perangkat ditentukan tim terkait
+
+---
+
+### Task 23: Impor berkas DICOM dari media USB
+**Deskripsi:** Rancangan perangkat keras memuat flash drive 32 GB sebagai **jalur
+masukan**: berkas DICOM dari mesin X-ray digital dibawa ke tablet melalui media itu
+untuk diproses. Ini melengkapi jalur kamera, yang memotret film fisik.
+
+Kedua jalur berbeda sifatnya. Foto kamera berukuran sekitar tiga sampai enam megabyte
+dan tidak membawa identitas pasien. Berkas DICOM jauh lebih besar dan **membawa
+identitas pasien di dalam header** — nama, tanggal lahir, nomor rekam medis, nama
+institusi. Perbedaan itu menentukan penanganan keduanya.
+
+Proporsi antara kedua jalur tidak tetap dan bergantung pada praktik masing-masing
+fasilitas, sehingga sistem harus menangani keduanya sama baiknya tanpa mengasumsikan
+salah satunya dominan.
+
+Media dicolokkan oleh petugas puskesmas, bukan oleh tenaga teknis. Flash drive yang
+sama kemungkinan pernah dipakai di komputer lain dan isinya tidak terverifikasi. Media
+lepasan yang tidak dipercaya merupakan jalur serangan yang dikenal luas, dan alat ini
+adalah perangkat kesehatan. Pembatasan pada titik masuk karena itu menjadi bagian
+dari task ini, bukan catatan tambahan.
+
+**Acceptance criteria — pengerasan titik masuk:**
+- [ ] Media dipasang **hanya-baca**, dengan opsi `noexec`, `nosuid`, dan `nodev`
+- [ ] Hanya berkas yang cocok pola yang diharapkan dibaca; isi media tidak dipindai
+      menyeluruh
+- [ ] Magic bytes DICOM diverifikasi sebelum berkas diurai, mengikuti pola yang sudah
+      dipakai pada validasi unggahan
+- [ ] Batas jumlah berkas dan ukuran total per sesi impor
+- [ ] Tidak ada berkas dari media yang pernah dieksekusi
+- [ ] Setiap sesi impor tercatat di audit: waktu, petugas, jumlah berkas, hasil
+
+**Acceptance criteria — pemrosesan:**
+- [ ] Tag `Modality` bernilai `CR`, `DX`, atau `DR` dan `BodyPartExamined` bernilai
+      `CHEST` diverifikasi; ketidaksesuaian ditolak dengan alasan yang dapat dipahami
+      petugas
+- [ ] Tag identitas pasien dihapus sebelum berkas disimpan, dan pseudonim dipakai
+      sebagai penghubung
+- [ ] Berkas asli dan hasil pemeriksaan sama-sama disimpan, sesuai keputusan tim
+      perangkat keras
+- [ ] Kebijakan penghapusan lokal setelah sinkronisasi berhasil, mengingat kapasitas
+      SSD terbatas dan berkas DICOM jauh lebih besar daripada foto kamera
+- [ ] Impor bersifat idempoten; media yang sama dicolokkan dua kali tidak menghasilkan
+      pemeriksaan ganda
+
+**Verification:**
+- [ ] Test: berkas bukan DICOM pada media diabaikan tanpa menghentikan sesi impor
+- [ ] Test: DICOM dengan modalitas tidak sesuai ditolak
+- [ ] Test: berkas hasil impor tidak lagi memuat tag identitas pasien
+- [ ] Test: media yang sama diimpor dua kali menghasilkan satu pemeriksaan
+- [ ] Test: sesi impor tercatat di audit secara lengkap
+- [ ] `pytest -q --cov` ≥ 95 %
+
+**Pertanyaan terbuka:** bentuk data dari mesin X-ray di lapangan belum diketahui —
+apakah satu berkas DICOM per pemeriksaan, atau folder DICOMDIR berisi beberapa seri.
+Keduanya memerlukan implementasi yang berbeda. Perlu dikonfirmasi ke pihak yang
+pernah mengoperasikan mesin di Balkesmas Klaten atau RSUD Mimika.
+
+**Dependencies:** Task 7 (penyimpanan citra), Task 21 (de-identifikasi).
+Sebagian besar antarmuka impor berada di sisi perangkat — perlu kesepakatan ownership
+dengan Frontend Engineer.
+
+**Files:** `app/services/dicom_import.py`, `app/services/deidentify.py`, `app/services/image_validation.py`, `app/api/routes/imports.py`, `app/models/audit_log.py`, `tests/test_dicom_import.py`
+
+**Ukuran:** M (backend) + M (perangkat)
