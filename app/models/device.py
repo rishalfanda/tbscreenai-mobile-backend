@@ -58,9 +58,13 @@ class Device(Base, UuidPkMixin, TimestampMixin, TenantMixin):
     The credential answers the second question; it is issued once at
     registration and only its hash is kept, the same way user passwords are.
 
-    A Raspberry Pi 5 has two interfaces with different MACs. Ethernet is the
-    canonical one — its address is burned into the chip, so a unit that syncs
-    over cable one day and wireless the next stays a single row.
+    The canonical address is the WLAN interface's, not Ethernet's. Units upload
+    only when they reach WiFi, so the wireless interface is the one guaranteed
+    to be up whenever the server hears from a device at all.
+
+    It has to be that interface's permanent hardware address, not whatever it
+    happens to be using. WiFi stacks can present a different, randomised
+    address per network, which would register one physical unit as several.
     """
 
     __tablename__ = "devices"

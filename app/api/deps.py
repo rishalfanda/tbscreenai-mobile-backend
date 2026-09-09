@@ -95,6 +95,8 @@ def require_roles(*roles: str) -> Callable[[User], User]:
 #   POST   /sync/push         x        -          -
 #   GET    /sync/pull         x        -          -
 #   GET    /sync/model-version x       x          x
+#   POST   /devices            -        -         x
+#   GET    /devices            -        x         x
 #
 # The split is by function, not seniority. Clinical acts — running inference,
 # recording a diagnosis, agreeing or disagreeing with the AI — are the
@@ -114,6 +116,12 @@ PATIENT_DELETE_ROLES = (ROLE_ADMIN_RS, ROLE_SUPER_ADMIN)
 
 CLINICAL_ROLES = (ROLE_DOCTOR,)
 """Inference, diagnosis records, verdicts, and tablet sync."""
+
+DEVICE_READ_ROLES = (ROLE_ADMIN_RS, ROLE_SUPER_ADMIN)
+"""Knowing what hardware is deployed is an administrative concern."""
+
+DEVICE_REGISTER_ROLES = (ROLE_SUPER_ADMIN,)
+"""Issuing a credential that can sync a hospital's data is a central act."""
 
 
 def get_tenant_id(
