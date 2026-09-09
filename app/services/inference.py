@@ -9,14 +9,48 @@ before the real model exists.
 import random
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.models.model_version import ModelVersion
 from app.schemas.diagnosis import Findings, InferenceResult
 
-MOCK_MODEL_VERSION = "TBScreen v2.1.0"
+# A mock verdict recorded under a bare production version name would read, in the
+# audit trail, as though model v1.3.1 actually produced it. The prefix keeps the
+# catalogue as the single source of the version while making the provenance of the
+# number unmistakable at a glance.
+MOCK_VERSION_PREFIX = "mock-"
 
 
-def run_mock_inference(image_filename: str | None = None) -> InferenceResult:
+def latest_model_version(db: Session) -> str:
+    """The one name a result may be attributed to.
+
+    Read from the catalog, not a constant. A constant drifts from
+    /sync/model-version the moment either side moves, and a result the tablet
+    labels one way while Sync Center reports another cannot be traced back to
+    the model that produced it. An empty catalog is a misconfiguration rather
+    than a default: serving a verdict nothing can be attributed to defeats the
+    point of recording a version at all.
+    Prefixed while inference is mocked, so a stored result is never attributable
+    to a production model that did not produce it..
+    """
+    version = db.scalar(
+        select(ModelVersion.version).where(ModelVersion.is_latest.is_(True))
+    )
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No model version is marked current. Screening is unavailable "
+                "until the model catalog is populated."
+            ),
+        )
+    return f"{MOCK_VERSION_PREFIX}{version}"
+
+def run_mock_inference(
+    model_version: str, image_filename: str | None = None
+) -> InferenceResult:
     """Return a structured MOCK result, or refuse outright in production.
 
     The verdict below is a coin flip. A coin flip presented as a clinical
@@ -49,6 +83,6 @@ def run_mock_inference(image_filename: str | None = None) -> InferenceResult:
         is_positive=is_positive,
         confidence=confidence,
         processing_time_ms=processing_ms,
-        model_version=MOCK_MODEL_VERSION,
+        model_version=model_version,
         findings=findings,
     )
