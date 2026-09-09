@@ -10,19 +10,20 @@ Legenda ukuran: **XS** 1 file · **S** 1–2 · **M** 3–5 · **L** 5–8.
 ## Fase A — Kebersihan & keamanan segera
 
 ### Task 1: Penjagaan produksi untuk mock inference
+**Status:** selesai — PR #1
 **Deskripsi:** `run_mock_inference` memutuskan positif/negatif TB dengan `random.random()`
 dan tidak ada apa pun yang mencegahnya jalan saat `ENV=production`. Ini mode kegagalan
 terburuk yang bisa dipunyai sistem ini: vonis acak yang tampil sebagai hasil klinis.
 
 **Acceptance criteria:**
-- [ ] `run_mock_inference` menolak jalan (raise) bila `settings.env == "production"`
-- [ ] Pesan error menyebut bahwa model asli belum terpasang, bukan stack trace mentah
-- [ ] `is_mock: true` tetap ada di respons untuk env non-produksi
+- [x] `run_mock_inference` menolak jalan (raise) bila `settings.env == "production"`
+- [x] Pesan error menyebut bahwa model asli belum terpasang, bukan stack trace mentah
+- [x] `is_mock: true` tetap ada di respons untuk env non-produksi
 
 **Verification:**
-- [ ] Test: `pytest tests/test_security_controls.py -q`
-- [ ] Test baru: `ENV=production` + panggil `/diagnoses/infer` → bukan 200
-- [ ] `ruff check . && mypy` bersih
+- [x] Test: `pytest tests/test_security_controls.py -q`
+- [x] Test baru: `ENV=production` + panggil `/diagnoses/infer` → bukan 200
+- [x] `ruff check . && mypy` bersih
 
 **Dependencies:** None
 **Files:** `app/services/inference.py`, `tests/test_security_controls.py`
@@ -31,18 +32,19 @@ terburuk yang bisa dipunyai sistem ini: vonis acak yang tampil sebagai hasil kli
 ---
 
 ### Task 2: Merge `fix/critical-data-integrity` ke `master`
+**Status:** selesai — PR #2. Commit `68f4ecf` terverifikasi ada di riwayat `main`.
 **Deskripsi:** Empat commit pengerasan (integritas data, RBAC, rate limit, validasi
 upload) hanya ada di branch. `master` masih commit awal, dan CI hanya terpicu di
 `master`/`main` + PR — jadi tidak ada yang menjaga kode terkini.
 
 **Acceptance criteria:**
-- [ ] `master` berisi seluruh 5 commit
-- [ ] CI hijau di `master` (job `quality` **dan** `migrations`)
-- [ ] Branch lama dihapus atau ditandai merged
+- [x] `master` berisi seluruh 5 commit
+- [x] CI hijau di `master` (job `quality` **dan** `migrations`)
+- [x] Branch lama dihapus atau ditandai merged
 
 **Verification:**
-- [ ] `git log --oneline master` menampilkan `68f4ecf` di puncak
-- [ ] GitHub Actions run di `master` hijau
+- [x] `git log --oneline master` menampilkan `68f4ecf` di puncak
+- [x] GitHub Actions run di `master` hijau
 
 **Dependencies:** Task 1 (masuk dalam merge yang sama)
 **Files:** —
@@ -51,19 +53,20 @@ upload) hanya ada di branch. `master` masih commit awal, dan CI hanya terpicu di
 ---
 
 ### Task 3: Satukan penamaan versi model
+**Status:** selesai — PR #3, merged 9 September 2026
 **Deskripsi:** `/diagnoses/infer` mengembalikan `TBScreen v2.1.0`; `/sync/model-version`
 mengembalikan `v1.3.1`. Dua skema penamaan untuk satu model berarti layar Result dan
 Sync Center melaporkan versi berbeda, dan audit klinis tidak bisa memastikan model mana
 yang menghasilkan sebuah putusan.
 
 **Acceptance criteria:**
-- [ ] `/infer` mengembalikan versi yang sama dengan `model_versions.is_latest`
-- [ ] Sumber kebenaran tunggal: `MOCK_MODEL_VERSION` dibaca dari katalog, bukan konstanta
-- [ ] Diagnosis tersimpan membawa versi yang bisa dicocokkan ke baris `model_versions`
+- [x] `/infer` mengembalikan versi yang sama dengan `model_versions.is_latest`
+- [x] Sumber kebenaran tunggal: `MOCK_MODEL_VERSION` dibaca dari katalog, bukan konstanta
+- [x] Diagnosis tersimpan membawa versi yang bisa dicocokkan ke baris `model_versions`
 
 **Verification:**
-- [ ] Test: `/infer` lalu `/sync/model-version` → `model_version` identik
-- [ ] `pytest -q` hijau
+- [x] Test: `/infer` lalu `/sync/model-version` → `model_version` identik
+- [x] `pytest -q` hijau
 
 **Dependencies:** None
 **Files:** `app/services/inference.py`, `app/api/routes/diagnoses.py`, `tests/test_patients_diagnoses.py`
@@ -72,6 +75,7 @@ yang menghasilkan sebuah putusan.
 ---
 
 ### Task 4: Pindahkan JWT ke penyimpanan aman perangkat
+**Status:** tidak diketahui — dikerjakan di repo Flutter, perlu dikonfirmasi
 **Deskripsi:** `access_token` dan `refresh_token` (umur 7 hari) tersimpan sebagai TEXT
 polos di tabel `AppSettings` drift. Tablet rumah sakit adalah perangkat bersama dan
 gampang hilang; siapa pun yang pegang `tbscreen_local.sqlite` punya sesi dokter selama
@@ -95,6 +99,7 @@ storage layer yang menyaingi drift, jadi tidak melanggar larangan paket di `CLAU
 ---
 
 ### Task 4b: Perbaiki konfigurasi rilis Android
+**Status:** tidak diketahui — dikerjakan di repo Flutter, perlu dikonfirmasi
 **Deskripsi:** `android.permission.INTERNET` hanya ada di `android/app/src/debug/AndroidManifest.xml`
 dan `profile/`, tidak di `main/`. Manifest hasil merge untuk build **release** karenanya tidak
 punya izin jaringan sama sekali — APK release tidak bisa login, sync, maupun inferensi. Cacat ini
@@ -122,6 +127,7 @@ release ditandatangani dengan kunci debug.
 ---
 
 ### Task 4c: Hentikan Result menampilkan data klinis karangan
+**Status:** tidak diketahui — dikerjakan di repo Flutter, perlu dikonfirmasi
 **Deskripsi:** Dengan formulir Diagnosis dikosongkan sepenuhnya, layar Result tetap merender
 Gender `Female`, Comorbidity `None`, Smoking Status `No`, TB Contact `Unknown`, Sputum (BTA)
 `Negative`, dan Culture `Negative`. Tidak satu pun dimasukkan pengguna. Layar yang sama punya
@@ -180,20 +186,23 @@ citra nyata satu kali pun.
 ---
 
 ### Task 6: Object storage (MinIO) di stack dev
+**Status:** selesai — PR #6, merged 9 September 2026
+**Follow-up:** tag MinIO di-pin ke `RELEASE.2025-09-07T16-13-09Z` di
+`docker-compose.yml` dan job CI `storage` — PR #7, merged 9 September 2026
 **Deskripsi:** Belum ada tempat menyimpan citra. Keputusan ADR-001 sudah diambil —
 MinIO, alasan penentunya kedaulatan data (citra medis tidak keluar dari infrastruktur RS),
 bukan skalabilitas.
 
 **Acceptance criteria:**
-- [ ] MinIO di `docker-compose.yml` dengan healthcheck
-- [ ] `boto3` client terbungkus service, endpoint dari config
-- [ ] Bucket dibuat otomatis saat startup bila belum ada
-- [ ] `.env.example` mendokumentasikan variabel baru
+- [x] MinIO di `docker-compose.yml` dengan healthcheck
+- [x] `boto3` client terbungkus service, endpoint dari config
+- [x] Bucket dibuat otomatis saat startup bila belum ada
+- [x] `.env.example` mendokumentasikan variabel baru
 
 **Verification:**
-- [ ] `docker compose up -d` → MinIO healthy
-- [ ] Test: put lalu get object kembali utuh
-- [ ] `mypy` bersih
+- [x] `docker compose up -d` → MinIO healthy
+- [x] Test: put lalu get object kembali utuh
+- [x] `mypy` bersih
 
 **Dependencies:** None
 **Files:** `docker-compose.yml`, `requirements.txt`, `app/core/config.py`, `app/services/storage.py`, `.env.example`
@@ -324,6 +333,28 @@ kalau lebih baik disisipkan sesuai graf dependensi.
 ---
 
 ### Task 16: Device Registry
+**Status:** sebagian — PR #8, menunggu review.
+
+Sudah ada: tabel `devices` dengan `tenant_id` non-nullable dan unique constraint
+pada `mac_address`, migrasi `0420c9949e62` yang terbukti bisa di-rollback,
+`POST /devices` yang menerbitkan kredensial sekali pakai (`secrets.token_urlsafe`,
+hanya hash bcrypt yang disimpan), dan `GET /devices` dengan isolasi antar-RS.
+
+Belum ada: revoke, rebind-mac, `fleet-status`, verifikasi kredensial di jalur
+sync, dan `sync_logs.device_id` menjadi foreign key — yang terakhir butuh migrasi
+baris yang sudah ada, jadi pantas jadi revisi tersendiri.
+
+Pengenal yang dipakai adalah MAC **WLAN**, bukan Ethernet. Dikonfirmasi Mas
+Fikry: unit hanya upload saat terhubung WiFi, jadi antarmuka nirkabel yang pasti
+aktif tiap kali server mendengar dari perangkat. Masih perlu dipastikan apakah
+perangkat melaporkan alamat permanen (`ethtool -P wlan0`) atau alamat yang sedang
+dipakai — randomisasi MAC per jaringan akan mendaftarkan satu unit sebagai
+beberapa.
+
+Kolom telemetri (versi model terpasang, waktu sinkron terakhir, daya baterai)
+sengaja belum dibuat sampai ada endpoint yang mengisinya. Untuk baterai: INA226
+melaporkan tegangan dan arus, bukan persentase — perangkat sebaiknya mengirim
+nilai mentah, karena persentase bisa dihitung dari mentah tapi tidak sebaliknya.
 **Deskripsi:** `sync_logs.device_id` bertipe `String(100)`, nullable, dan tidak
 terhubung ke tabel mana pun. Perangkat tidak pernah diregistrasi, sehingga server
 tidak dapat menjawab tiga pertanyaan yang menentukan operasional lapangan: perangkat
@@ -387,6 +418,10 @@ karena alamatnya tertanam permanen pada chip.
 ---
 
 ### Task 17: Distribusi artefak model ke perangkat
+**Status:** perlu konfirmasi — kemungkinan dialihkan ke Mas Wafiq. Judul Fase E
+masih berbunyi "usulan" dan pembagian ini belum pernah dikonfirmasi formal.
+Perlu dipastikan supaya tidak ada pekerjaan ganda: Task 17 dan Task 18 sama-sama
+membutuhkan unduhan resumable.
 **Deskripsi:** `model_versions.download_url` bertipe nullable dan tidak pernah diisi,
 termasuk di `scripts/seed.py`. Yang tersedia sekarang adalah *pengecekan versi*, bukan
 *transfer model*: server dapat memberitahu bahwa v1.3.1 berukuran 47,2 MB tersedia,
