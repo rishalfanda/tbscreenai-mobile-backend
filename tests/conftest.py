@@ -21,6 +21,12 @@ from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-at-least-32-characters")
 
+# The client fixture is per-test, and TestClient runs the app's lifespan each
+# time. Left on, that is one connection attempt to MinIO per test against a
+# port nothing is listening on. Storage behaviour has its own suite, which
+# builds what it needs explicitly.
+os.environ.setdefault("STORAGE_AUTO_CREATE_BUCKET", "false")
+
 # bcrypt's real cost (12 rounds) is the point in production and a waste here:
 # the fixtures hash five passwords per test plus a login per auth header, which
 # dominated the runtime. 4 rounds is the library minimum and exercises the same

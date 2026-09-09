@@ -143,6 +143,11 @@ class TestProductionConfigGuard:
         "jwt_secret_key": "x" * 48,
         "cors_origins": ["https://tbscreen.example.id"],
         "database_url": "postgresql+psycopg://u:p@db:5432/tbscreenai",
+        # Storage settings belong in SAFE for the same reason the others do:
+        # this dict is the definition of a production config with nothing left
+        # at a development default, and the guard now covers storage too.
+        "storage_secret_key": "s" * 40,
+        "storage_endpoint_url": "https://storage.tbscreen.example.id",
     }
 
     def test_a_correctly_configured_production_env_starts(self):
@@ -165,6 +170,37 @@ class TestProductionConfigGuard:
     def test_sqlite_in_production_is_refused(self):
         with pytest.raises(ValidationError, match="SQLite"):
             Settings(**{**self.SAFE, "database_url": "sqlite:///./prod.db"})
+
+    def test_the_development_storage_secret_is_refused(self):
+        """Whoever knows the compose file knows this password."""
+        with pytest.raises(ValidationError, match="STORAGE_SECRET_KEY"):
+            Settings(**{**self.SAFE, "storage_secret_key": "tbscreen_dev_storage"})
+
+    def test_a_plaintext_storage_endpoint_is_refused(self):
+        """Chest X-rays cross this link on their way to the bucket."""
+        with pytest.raises(ValidationError, match="plaintext"):
+            Settings(**{**self.SAFE, "storage_endpoint_url": "http://storage:9000"})
+
+    def test_plaintext_storage_can_be_accepted_deliberately(self):
+        """Storage on a private network the app never leaves is a defensible
+        deployment. The flag makes it a decision on the record rather than a
+        default nobody looked at."""
+        settings = Settings(
+            **{
+                **self.SAFE,
+                "storage_endpoint_url": "http://storage:9000",
+                "storage_allow_insecure_endpoint": True,
+            }
+        )
+
+        assert settings.is_production
+
+    def test_the_storage_access_key_is_not_treated_as_a_secret(self):
+        """It is a username. Refusing a valid one would be a false alarm that
+        teaches people to work around the guard."""
+        settings = Settings(**{**self.SAFE, "storage_access_key": "tbscreen"})
+
+        assert settings.is_production
 
     def test_every_problem_is_reported_at_once(self):
         """One restart should surface the whole list, not the first item and

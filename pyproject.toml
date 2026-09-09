@@ -42,9 +42,22 @@ warn_unreachable = true
 module = "alembic.*"
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+# boto3 ships without type hints. The surface used here is four calls, and
+# pulling in stubs would pin the code to a client-factory pattern for very
+# little gain.
+module = ["boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    # Needs a real S3 implementation on STORAGE_ENDPOINT_URL. Skips itself when
+    # there is none, so `pytest` still runs with Docker stopped. Deselect
+    # explicitly with -m "not integration".
+    "integration: requires a live service, not just the app",
+]
 
 [tool.coverage.run]
 source = ["app"]

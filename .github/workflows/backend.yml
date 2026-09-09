@@ -78,3 +78,54 @@ jobs:
         run: |
           alembic downgrade -1
           alembic upgrade head
+
+  storage:
+    # The unit suite stubs boto3, so the round trip Task 6 actually promises —
+    # bytes in, identical bytes out — is never exercised by it. Asserting that
+    # against a stub only tests the stub. This job is the one place it runs
+    # against a real S3 implementation, the same argument as the migrations job
+    # above.
+    runs-on: ubuntu-latest
+    env:
+      STORAGE_ENDPOINT_URL: http://127.0.0.1:9000
+      STORAGE_ACCESS_KEY: tbscreen
+      STORAGE_SECRET_KEY: tbscreen_dev_storage
+      # Turns a skipped integration test into a failure. Without it this job
+      # goes green when MinIO never came up, which is worse than no job at all:
+      # it reports that the round trip works when nothing checked.
+      STORAGE_REQUIRED: "true"
+      JWT_SECRET_KEY: ci-secret-key-at-least-32-characters-long
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start MinIO
+        # Not a `services:` container. Those cannot override the image command,
+        # and minio/minio exits immediately without `server /data`.
+        # Pin this tag alongside the one in docker-compose.yml.
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=tbscreen \
+            -e MINIO_ROOT_PASSWORD=tbscreen_dev_storage \
+            minio/minio:latest server /data
+
+      - name: Wait for MinIO
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/minio/health/live; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MinIO never became ready"
+          docker logs minio
+          exit 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Storage round trip
+        run: pytest tests/test_storage.py -m integration -q -rs

@@ -18,7 +18,7 @@ dari JWT. Uji isolasi ada di smoke test & (nanti) pytest.
 ## Dev setup (Windows)
 
 ```powershell
-# 1. Postgres
+# 1. Postgres + MinIO
 docker compose up -d
 
 # 2. Python env
@@ -36,7 +36,15 @@ copy .env.example .env
 
 Swagger UI: http://127.0.0.1:8000/docs · Kontrak beku: `docs/openapi.json`
 
+MinIO console: http://127.0.0.1:9001 (kredensial di `docker-compose.yml`).
+Bucket citra dibuat otomatis saat aplikasi start, jadi tidak ada langkah manual —
+matikan lewat `STORAGE_AUTO_CREATE_BUCKET=false` di deployment, karena di sana
+bucket disediakan bersama kebijakan retensi dan enkripsinya.
+
 Kredensial dev (JANGAN dipakai di deployment): lihat `scripts/seed.py`.
+
+`pytest` jalan tanpa Docker; test yang butuh storage sungguhan menandai dirinya
+`integration` dan otomatis di-skip. Untuk menjalankannya, nyalakan compose dulu.
 
 ## Struktur
 
@@ -50,7 +58,8 @@ app/
 ├── models/          SQLAlchemy: Hospital, User, Patient, Diagnosis,
 │                    ModelVersion, SyncLog (idempotency ledger)
 ├── schemas/         Pydantic request/response
-└── services/        inference (mock), sync (idempotent push + conflict detect)
+└── services/        inference (mock), sync (idempotent push + conflict detect),
+                     storage (S3/MinIO — satu-satunya modul yang impor boto3)
 ```
 
 ## Sync semantics (offline-first)
