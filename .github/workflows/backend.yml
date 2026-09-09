@@ -101,12 +101,13 @@ jobs:
       - name: Start MinIO
         # Not a `services:` container. Those cannot override the image command,
         # and minio/minio exits immediately without `server /data`.
-        # Pin this tag alongside the one in docker-compose.yml.
+        # Same tag as docker-compose.yml, so a green CI means the version
+        # developers actually run is the version that was tested.
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=tbscreen \
             -e MINIO_ROOT_PASSWORD=tbscreen_dev_storage \
-            minio/minio:latest server /data
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
 
       - name: Wait for MinIO
         run: |
