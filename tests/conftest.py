@@ -80,6 +80,13 @@ def db_session() -> Generator[Session, None, None]:
         session.close()
         Base.metadata.drop_all(engine)
 
+        # StaticPool holds one SQLite connection open for the whole fixture.
+        # Without disposing it the connection survives until the garbage
+        # collector reaches it, and Python 3.13 reports every one of those as a
+        # ResourceWarning — roughly 166 per run, which buries any warning that
+        # actually matters. CI runs 3.11 and never showed them.
+        engine.dispose()
+
 
 @pytest.fixture
 def client(db_session: Session) -> Generator[TestClient, None, None]:
