@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
 from app.api.router import api_router
+from app.core.audit import install_access_audit
 from app.core.config import get_settings
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.services.storage import StorageError, get_object_storage
@@ -55,6 +56,10 @@ app = FastAPI(
 # slowapi's — see app/core/rate_limit.py for why.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# Installed first, so it wraps outermost and sees the final status code of
+# every request — including the ones a later handler turns into 4xx.
+install_access_audit(app)
 
 app.add_middleware(
     CORSMiddleware,

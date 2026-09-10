@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 import jwt as pyjwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
@@ -56,6 +57,10 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+    # Left here for the audit middleware, which runs outside the route and so
+    # cannot resolve the token itself. Set only after every check has passed,
+    # so a rejected request never records an actor it did not really have.
+    request.state.actor = user
     return user
 
 
