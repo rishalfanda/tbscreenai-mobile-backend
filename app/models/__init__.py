@@ -1,4 +1,5 @@
 # Import every model here so Alembic autogenerate sees the full metadata.
+from app.models.audit import AccessLog
 from app.models.base import Base
 from app.models.device import Device
 from app.models.diagnosis import Diagnosis
@@ -9,6 +10,7 @@ from app.models.sync_log import SyncLog
 from app.models.user import User
 
 __all__ = [
+    "AccessLog",
     "Base",
     "Device",
     "Diagnosis",
