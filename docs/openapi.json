@@ -894,7 +894,7 @@
           "devices"
         ],
         "summary": "List Devices",
-        "description": "Devices belonging to the caller's hospital, newest first.\n\nScoped by `tenant_id` from the token, never from a query parameter, so an\nadmin of one hospital cannot enumerate another's estate.",
+        "description": "Devices belonging to the caller's hospital, newest first.\n\nScoped by `tenant_id` from the token, never from a query parameter, so an\nadmin of one hospital cannot enumerate another's estate.\n\nThe bounds are refused at the edge rather than passed on: a negative offset\nand an unbounded limit are both questions the database should never be\nasked, and 422 says so more usefully than a slow query or a driver error.",
         "operationId": "list_devices_api_v1_devices_get",
         "security": [
           {
@@ -908,6 +908,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -918,6 +920,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }

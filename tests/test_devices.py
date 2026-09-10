@@ -249,3 +249,43 @@ class TestDeviceAccessControl:
         )
         assert len(client.get("/api/v1/devices", headers=headers_admin_a).json()) == 1
         assert client.get("/api/v1/devices", headers=headers_admin_b).json() == []
+
+class TestInputBounds:
+    """Refusing at the edge what the database should never be asked."""
+
+    @pytest.mark.parametrize(
+        "written",
+        [
+            "!!aa:bb:cc:dd:ee:ff??",  # twelve hex digits buried in punctuation
+            "aa:bb-cc:dd-ee:ff",  # separators mixed within one address
+            "aa bb cc dd ee ff",  # spaces are not a MAC separator
+        ],
+    )
+    def test_a_string_that_merely_contains_hex_digits_is_not_a_mac(
+        self, written: str
+    ) -> None:
+        # Deleting everything that is not a hex digit would accept all three.
+        # Matching the four spellings a MAC is actually printed in does not.
+        with pytest.raises(ValueError):
+            normalise_mac(written)
+
+    @pytest.mark.parametrize(
+        "query", ["?limit=0", "?limit=101", "?offset=-1"]
+    )
+    def test_pagination_outside_its_bounds_is_refused(
+        self, client: TestClient, hospitals: dict[str, Hospital],
+        headers_admin_a: dict, query: str,
+    ) -> None:
+        assert client.get(
+            f"/api/v1/devices{query}", headers=headers_admin_a
+        ).status_code == 422
+
+    def test_the_bounds_themselves_are_accepted(
+        self, client: TestClient, hospitals: dict[str, Hospital], headers_admin_a: dict
+    ) -> None:
+        assert client.get(
+            "/api/v1/devices?limit=1&offset=0", headers=headers_admin_a
+        ).status_code == 200
+        assert client.get(
+            "/api/v1/devices?limit=100", headers=headers_admin_a
+        ).status_code == 200

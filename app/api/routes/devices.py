@@ -9,7 +9,7 @@ must name the owning hospital explicitly via X-Tenant-Id.
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -94,13 +94,17 @@ def list_devices(
     db: DbSession,
     tenant_id: CurrentTenant,
     _user: CurrentUser,
-    limit: int = 100,
-    offset: int = 0,
+        limit: int = Query(100, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ) -> list[Device]:
     """Devices belonging to the caller's hospital, newest first.
 
     Scoped by `tenant_id` from the token, never from a query parameter, so an
     admin of one hospital cannot enumerate another's estate.
+
+    The bounds are refused at the edge rather than passed on: a negative offset
+    and an unbounded limit are both questions the database should never be
+    asked, and 422 says so more usefully than a slow query or a driver error.
     """
     stmt = (
         select(Device)

@@ -29,7 +29,18 @@ DEVICE_STATUS_DEFAULT = "pending"
 # "aa:bb:cc:dd:ee:ff" - twelve hex digits and five separators.
 MAC_LENGTH = 17
 
-_NON_HEX = re.compile(r"[^0-9a-fA-F]")
+# The four spellings a MAC is actually printed in. Matching these explicitly,
+# rather than deleting whatever is not a hex digit, is what keeps
+# "!!aa:bb:cc:dd:ee:ff??" from being read as a valid address: stripping
+# punctuation accepts any string that happens to contain twelve hex digits,
+# which is a much larger set than the formats we mean to support.
+_MAC_FORMATS = (
+    re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$"),   # aa:bb:cc:dd:ee:ff
+    re.compile(r"^[0-9a-f]{2}(?:-[0-9a-f]{2}){5}$"),   # aa-bb-cc-dd-ee-ff
+    re.compile(r"^[0-9a-f]{4}(?:\.[0-9a-f]{4}){2}$"),  # aabb.ccdd.eeff
+    re.compile(r"^[0-9a-f]{12}$"),                     # aabbccddeeff
+)
+_SEPARATORS = str.maketrans("", "", ":-.")
 
 
 def normalise_mac(raw: str) -> str:
@@ -40,12 +51,15 @@ def normalise_mac(raw: str) -> str:
     those are three rows for one device and the unique constraint stops meaning
     anything. Normalising on the way in is what makes the constraint true.
 
-    Raises ValueError on anything that is not twelve hex digits, so a typo
+    Only those spellings are accepted, and separators may not be mixed within
+    one address. Surrounding whitespace is forgiven because it is a paste
+    artefact rather than a format. Anything else raises ValueError, so a typo
     fails at registration rather than becoming a device nobody can match.
     """
-    digits = _NON_HEX.sub("", raw).lower()
-    if len(digits) != 12:
+    candidate = raw.strip().lower()
+    if not any(pattern.match(candidate) for pattern in _MAC_FORMATS):
         raise ValueError(f"{raw!r} is not a MAC address")
+    digits = candidate.translate(_SEPARATORS)
     return ":".join(digits[index : index + 2] for index in range(0, 12, 2))
 
 
