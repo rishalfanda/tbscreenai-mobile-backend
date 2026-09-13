@@ -27,7 +27,7 @@ jobs:
       - name: Test
         # SQLite in-memory per test — no service container needed here.
         run: pytest -q --cov
-        
+
       - name: Contract is current
         # docs/openapi.json is what the Flutter client is generated from. A
         # stale copy lets the tablet be built against a contract the server no
@@ -107,7 +107,7 @@ jobs:
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=tbscreen \
             -e MINIO_ROOT_PASSWORD=tbscreen_dev_storage \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
 
       - name: Wait for MinIO
         run: |
