@@ -17,14 +17,11 @@ services:
       retries: 10
 
   storage:
-    # Object storage for chest X-rays. Images do not belong in Postgres: a
-    # single study is megabytes where a record is kilobytes, and mixing them
-    # makes backups slow and replication heavy. MinIO speaks the S3 API, so
-    # the same client works against anything else later.
-    #
-    # Pinned so dev and CI run the same server. Bump deliberately, together
-    # with the tag in .github/workflows/backend.yml.
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # Pinned so dev and CI run the same server. Pulled from quay.io because
+    # MinIO withdrew minio/minio from Docker Hub in September 2026; same image,
+    # same tag, different registry. Bump deliberately, together with the tag in
+    # .github/workflows/backend.yml.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: tbscreenai-storage
     command: server /data --console-address ":9001"
     environment:
