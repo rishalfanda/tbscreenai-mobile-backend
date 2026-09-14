@@ -1,5 +1,6 @@
 # Import every model here so Alembic autogenerate sees the full metadata.
 from app.models.base import Base
+from app.models.device import Device
 from app.models.diagnosis import Diagnosis
 from app.models.hospital import Hospital
 from app.models.model_version import ModelVersion
@@ -9,6 +10,7 @@ from app.models.user import User
 
 __all__ = [
     "Base",
+    "Device",
     "Diagnosis",
     "Hospital",
     "ModelVersion",

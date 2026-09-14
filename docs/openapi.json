@@ -824,6 +824,153 @@
         }
       }
     },
+    "/api/v1/devices": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Register Device",
+        "description": "Register a unit and issue its credential, which is shown exactly once.\n\nThe MAC arrives already normalised by the schema, so the unique constraint\ncompares like with like.",
+        "operationId": "register_device_api_v1_devices_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-tenant-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRegistered"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "List Devices",
+        "description": "Devices belonging to the caller's hospital, newest first.\n\nScoped by `tenant_id` from the token, never from a query parameter, so an\nadmin of one hospital cannot enumerate another's estate.\n\nThe bounds are refused at the edge rather than passed on: a negative offset\nand an unbounded limit are both questions the database should never be\nasked, and 422 says so more usefully than a slow query or a driver error.",
+        "operationId": "list_devices_api_v1_devices_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "x-tenant-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceOut"
+                  },
+                  "title": "Response List Devices Api V1 Devices Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sync/push": {
       "post": {
         "tags": [
@@ -1037,6 +1184,114 @@
           "image"
         ],
         "title": "Body_infer_api_v1_diagnoses_infer_post"
+      },
+      "DeviceCreate": {
+        "properties": {
+          "mac_address": {
+            "type": "string",
+            "title": "Mac Address",
+            "description": "WLAN MAC. Any common spelling is accepted and stored in one canonical form."
+          }
+        },
+        "type": "object",
+        "required": [
+          "mac_address"
+        ],
+        "title": "DeviceCreate"
+      },
+      "DeviceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Tenant Id"
+          },
+          "mac_address": {
+            "type": "string",
+            "title": "Mac Address"
+          },
+          "status": {
+            "type": "string",
+            "pattern": "^(pending|active|suspended|decommissioned)$",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "tenant_id",
+          "mac_address",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DeviceOut",
+        "description": "What a device looks like to anyone reading the registry.\n\n`credential_hash` is absent by construction rather than excluded by a\nfilter. A field that is never declared cannot be leaked by a future\nendpoint that forgets to exclude it."
+      },
+      "DeviceRegistered": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Tenant Id"
+          },
+          "mac_address": {
+            "type": "string",
+            "title": "Mac Address"
+          },
+          "status": {
+            "type": "string",
+            "pattern": "^(pending|active|suspended|decommissioned)$",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "credential": {
+            "type": "string",
+            "title": "Credential",
+            "description": "Shown once. Store it on the device now; it cannot be retrieved again."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "tenant_id",
+          "mac_address",
+          "status",
+          "created_at",
+          "updated_at",
+          "credential"
+        ],
+        "title": "DeviceRegistered",
+        "description": "The registration response, and the only time the credential is readable.\n\nOnly the hash is stored, so this value cannot be recovered or re-sent later\n— a lost credential means registering the device again. That is the point:\na secret the server can reissue on demand is a secret the server is holding\nin a form someone else can read too."
       },
       "DiagnosisCreate": {
         "properties": {
