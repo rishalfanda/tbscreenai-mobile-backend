@@ -154,3 +154,63 @@ class TestFailureDoesNotBlockTheRequest:
         finally:
             app.state.audit_session = original
         assert "Access audit write failed" in caplog.text
+
+class TestTheCorrelationIdCannotBeAbused:
+    @pytest.mark.parametrize(
+        "supplied",
+        [
+            "x" * 200,  # longer than the column; the insert would fail
+            "not-a-uuid",
+            "../../etc/passwd",
+            "",
+        ],
+    )
+    def test_a_malformed_id_is_replaced_not_stored(
+        self, client: TestClient, db_session: Session,
+        hospitals: dict[str, Hospital], headers_a: dict, users, supplied: str,
+    ) -> None:
+        # Because an audit failure is logged rather than raised, a value long
+        # enough to break the insert would let a client switch off its own
+        # trail. Replacing it keeps the row, and keeps the length bounded.
+        response = client.get(
+            "/api/v1/patients", headers={**headers_a, "X-Request-Id": supplied}
+        )
+        latest = _entries(db_session)[-1]
+        assert latest.request_id != supplied
+        assert len(latest.request_id) == 36
+        assert latest.request_id == response.headers["X-Request-Id"]
+
+    def test_the_request_still_succeeds(
+        self, client: TestClient, hospitals: dict[str, Hospital],
+        headers_a: dict, users,
+    ) -> None:
+        # Refusing a clinical request over a correlation header would trade a
+        # cosmetic problem for an operational one.
+        assert client.get(
+            "/api/v1/patients", headers={**headers_a, "X-Request-Id": "rubbish"}
+        ).status_code == 200
+
+
+class TestSuperAdminActionsAreAttributedToTheHospitalTouched:
+    def test_the_resolved_tenant_is_recorded_not_the_actor_own(
+        self, client: TestClient, db_session: Session,
+        hospitals: dict[str, Hospital], headers_super: dict, users,
+    ) -> None:
+        # A super_admin has no hospital of their own. Recording that would
+        # leave NULL on every row, and an audit of one hospital would miss
+        # every action a central administrator took against it.
+        target = hospitals["B"]
+        client.get(
+            "/api/v1/patients",
+            headers={**headers_super, "X-Tenant-Id": str(target.id)},
+        )
+        latest = _entries(db_session)[-1]
+        assert latest.actor_role == "super_admin"
+        assert latest.tenant_id == target.id
+
+    def test_a_tenant_bound_user_still_records_their_own(
+        self, client: TestClient, db_session: Session,
+        hospitals: dict[str, Hospital], headers_a: dict, users,
+    ) -> None:
+        client.get("/api/v1/patients", headers=headers_a)
+        assert _entries(db_session)[-1].tenant_id == hospitals["A"].id

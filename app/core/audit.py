@@ -73,6 +73,27 @@ def _classify(path: str) -> tuple[str | None, uuid.UUID | None]:
     return kind, identifier
 
 
+def _correlation_id(supplied: str | None) -> str:
+    """Accept the caller's correlation id only when it is a well-formed UUID.
+
+    The column holds 36 characters. A longer header would make the insert fail,
+    and because an audit failure is logged rather than raised, a client could
+    quietly switch off its own trail simply by sending a long enough value.
+    Requiring a UUID also keeps control characters and other junk out of both
+    the table and the log lines that quote it.
+
+    A malformed value is replaced rather than refused: rejecting a clinical
+    request over a correlation header would trade a cosmetic problem for an
+    operational one.
+    """
+    if supplied is not None:
+        try:
+            return str(uuid.UUID(supplied))
+        except ValueError:
+            logger.warning("Ignoring malformed X-Request-Id header")
+    return str(uuid.uuid4())
+
+
 @contextmanager
 def _own_session() -> Iterator[Session]:
     """A session of the middleware's own, deliberately.
@@ -101,7 +122,7 @@ class AccessAuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+        request_id = _correlation_id(request.headers.get("X-Request-Id"))
         request.state.request_id = request_id
         request.state.actor = None
 
@@ -115,10 +136,17 @@ class AccessAuditMiddleware(BaseHTTPMiddleware):
     def _record(self, request: Request, response: Response, request_id: str) -> None:
         actor = getattr(request.state, "actor", None)
         kind, identifier = _classify(request.url.path)
+        # The tenant the request was actually scoped to, which for a
+        # super_admin is the hospital named in X-Tenant-Id rather than their
+        # own — they have none. Falling back to the actor's home tenant covers
+        # the endpoints that never resolve one, such as login.
+        tenant_id = getattr(request.state, "tenant_id", None) or getattr(
+            actor, "tenant_id", None
+        )
         # request.url.path, never request.url — a query string can carry a
         # patient name, and that name has no business being copied here.
         entry = AccessLog(
-            tenant_id=getattr(actor, "tenant_id", None),
+            tenant_id=tenant_id,
             actor_user_id=getattr(actor, "id", None),
             actor_role=getattr(actor, "role", None),
             action=_ACTIONS.get(request.method, request.method.lower()[:10]),

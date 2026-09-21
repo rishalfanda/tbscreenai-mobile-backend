@@ -13,12 +13,16 @@ than a 200 against your own.
 tenant yet, and refusing to record it would blind the log to exactly the events
 worth watching.
 
+Chained onto the device registry rather than onto row-versioning: both landed
+independently from the same parent, and leaving them as two heads would make
+`alembic upgrade head` refuse to run at all.
+
 No request bodies, no response bodies, no query strings. An audit log that
 copies the record it audits becomes a second store of the same protected data,
 doubling both the surface to defend and the retention rules that apply.
 
 Revision ID: 94924b759b64
-Revises: a1f4c7d92b30
+Revises: 0420c9949e62
 Create Date: 2026-09-10 14:31:07.122021
 
 """
@@ -29,7 +33,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = '94924b759b64'
-down_revision: Union[str, None] = 'a1f4c7d92b30'
+down_revision: Union[str, None] = '0420c9949e62'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
