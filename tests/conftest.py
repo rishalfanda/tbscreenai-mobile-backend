@@ -9,6 +9,7 @@ test; anything Postgres-specific is exercised by the migration itself.
 import os
 import uuid
 from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import date
 
 import bcrypt
@@ -94,6 +95,15 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
+    # The audit middleware opens a session of its own, which in production is
+    # the point. Here it would reach for Postgres while every other query runs
+    # against this in-memory SQLite, so point it at the same session — that is
+    # also what lets a test read back the rows the middleware just wrote.
+    @contextmanager
+    def _audit_session():
+        yield db_session
+
+    app.state.audit_session = _audit_session
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

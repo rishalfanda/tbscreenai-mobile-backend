@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 import jwt as pyjwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
@@ -56,6 +57,10 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+    # Left here for the audit middleware, which runs outside the route and so
+    # cannot resolve the token itself. Set only after every check has passed,
+    # so a rejected request never records an actor it did not really have.
+    request.state.actor = user
     return user
 
 
@@ -125,6 +130,7 @@ DEVICE_REGISTER_ROLES = (ROLE_SUPER_ADMIN,)
 
 
 def get_tenant_id(
+    request: Request,
     user: CurrentUser,
     x_tenant_id: Annotated[UUID | None, Header()] = None,
 ) -> UUID:
@@ -141,6 +147,10 @@ def get_tenant_id(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="super_admin must provide X-Tenant-Id header",
             )
+        # Left for the audit middleware. A super_admin has no tenant of their
+        # own, so without this the trail would record NULL for every action
+        # they take and an audit of one hospital would miss them entirely.
+        request.state.tenant_id = x_tenant_id
         return x_tenant_id
 
     if user.tenant_id is None:
@@ -148,6 +158,7 @@ def get_tenant_id(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User is not attached to a hospital",
         )
+    request.state.tenant_id = user.tenant_id
     return user.tenant_id
 
 
