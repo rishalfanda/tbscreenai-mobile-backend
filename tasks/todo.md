@@ -32,19 +32,24 @@ terburuk yang bisa dipunyai sistem ini: vonis acak yang tampil sebagai hasil kli
 ---
 
 ### Task 2: Merge `fix/critical-data-integrity` ke `master`
-**Status:** selesai — PR #2. Commit `68f4ecf` terverifikasi ada di riwayat `main`.
+**Status:** selesai, lewat commit `68f4ecf` yang sudah ada di riwayat `main`.
 **Deskripsi:** Empat commit pengerasan (integritas data, RBAC, rate limit, validasi
 upload) hanya ada di branch. `master` masih commit awal, dan CI hanya terpicu di
 `master`/`main` + PR — jadi tidak ada yang menjaga kode terkini.
 
 **Acceptance criteria:**
-- [x] `master` berisi seluruh 5 commit
-- [x] CI hijau di `master` (job `quality` **dan** `migrations`)
-- [x] Branch lama dihapus atau ditandai merged
+- [x] `/infer` memakai versi dari `model_versions.is_latest`, dengan awalan `mock-`
+      selama model asli belum terpasang. Contohnya `mock-v1.3.1` untuk katalog
+      `v1.3.1`, supaya hasil sementara tidak disangka berasal dari model produksi
+- [x] Sumber kebenaran tunggal: `MOCK_MODEL_VERSION` dibaca dari katalog, bukan konstanta
+- [ ] Diagnosis tersimpan membawa versi yang bisa dicocokkan ke baris `model_versions`.
+      Belum dicentang: `model_version` masih dikirim klien saat membuat diagnosis,
+      dan belum ada test yang membuktikan alur infer lalu simpan diagnosis
 
 **Verification:**
-- [x] `git log --oneline master` menampilkan `68f4ecf` di puncak
-- [x] GitHub Actions run di `master` hijau
+- [x] Test: `/infer` lalu `/sync/model-version`, versi dari `/infer` berakhiran
+      versi katalog (diperiksa dengan `endswith`, bukan kesamaan penuh)
+- [x] `pytest -q` hijau
 
 **Dependencies:** Task 1 (masuk dalam merge yang sama)
 **Files:** —
@@ -278,6 +283,7 @@ hidup. Di aplikasi medis, angka fiktif yang tampak resmi adalah bahaya demo.
 **Dependencies:** Task 9 (endpoint analitik menyusul CRUD)
 
 ### Task 11: Tabel audit akses
+**Status:** sedang ditinjau. Tabel jejak akses, middleware pencatatnya, dan revisi dari review ada di PR #11.
 **Deskripsi:** `sync_logs` mencatat operasi sinkronisasi, bukan siapa membaca atau
 mengubah apa lewat REST. Regulasi rekam medis menuntut jejak itu. `structlog` +
 request-id sudah direkomendasikan ADR-001.
@@ -333,7 +339,7 @@ kalau lebih baik disisipkan sesuai graf dependensi.
 ---
 
 ### Task 16: Device Registry
-**Status:** sebagian — PR #8, menunggu review.
+**Status:** sebagian. Tabel, pendaftaran, dan daftar perangkat masuk lewat PR #8, merged 14 September 2026.
 
 Sudah ada: tabel `devices` dengan `tenant_id` non-nullable dan unique constraint
 pada `mac_address`, migrasi `0420c9949e62` yang terbukti bisa di-rollback,
@@ -355,6 +361,7 @@ Kolom telemetri (versi model terpasang, waktu sinkron terakhir, daya baterai)
 sengaja belum dibuat sampai ada endpoint yang mengisinya. Untuk baterai: INA226
 melaporkan tegangan dan arus, bukan persentase — perangkat sebaiknya mengirim
 nilai mentah, karena persentase bisa dihitung dari mentah tapi tidak sebaliknya.
+
 **Deskripsi:** `sync_logs.device_id` bertipe `String(100)`, nullable, dan tidak
 terhubung ke tabel mana pun. Perangkat tidak pernah diregistrasi, sehingga server
 tidak dapat menjawab tiga pertanyaan yang menentukan operasional lapangan: perangkat
