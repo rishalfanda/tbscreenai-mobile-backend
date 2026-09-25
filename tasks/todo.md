@@ -343,15 +343,26 @@ kalau lebih baik disisipkan sesuai graf dependensi.
 
 ### Task 16: Device Registry
 **Status:** sebagian. Tabel, pendaftaran, dan daftar perangkat masuk lewat PR #8, merged 14 September 2026.
+Revoke dan rebind-mac menyusul lewat branch `feat/device-revoke-rebind`.
 
 Sudah ada: tabel `devices` dengan `tenant_id` non-nullable dan unique constraint
 pada `mac_address`, migrasi `0420c9949e62` yang terbukti bisa di-rollback,
 `POST /devices` yang menerbitkan kredensial sekali pakai (`secrets.token_urlsafe`,
 hanya hash bcrypt yang disimpan), dan `GET /devices` dengan isolasi antar-RS.
 
-Belum ada: revoke, rebind-mac, `fleet-status`, verifikasi kredensial di jalur
-sync, dan `sync_logs.device_id` menjadi foreign key — yang terakhir butuh migrasi
-baris yang sudah ada, jadi pantas jadi revisi tersendiri.
+`POST /devices/{id}/revoke` (admin_rs RS pemilik atau super_admin) memindahkan
+perangkat ke `suspended`, dan `POST /devices/{id}/rebind-mac` (hanya super_admin)
+mengikat MAC papan pengganti ke record yang sama. Keduanya wajib menyertakan alasan
+dan dicatat di tabel `device_events` (migrasi `f90d88e701c3`) bersama aktor serta
+MAC lama dan baru, terhubung ke `access_logs` lewat `request_id`. Revoke belum
+menghentikan apa pun: penegakannya menunggu verifikasi kredensial di jalur sync.
+Kredensial sengaja tidak dihancurkan saat revoke, supaya server masih bisa
+mengenali perangkat itu ketika tersambung lagi dan memerintahkannya menghapus data
+lokal, sesuai `docs/SECURITY_DESIGN.md`.
+
+Belum ada: `fleet-status`, verifikasi kredensial di jalur sync, dan
+`sync_logs.device_id` menjadi foreign key — yang terakhir butuh migrasi baris yang
+sudah ada, jadi pantas jadi revisi tersendiri.
 
 Pengenal yang dipakai adalah MAC **WLAN**, bukan Ethernet. Dikonfirmasi Mas
 Fikry: unit hanya upload saat terhubung WiFi, jadi antarmuka nirkabel yang pasti
@@ -405,8 +416,9 @@ karena alamatnya tertanam permanen pada chip.
 - [ ] `sync_logs.device_id` menjadi FK ke `devices.id`, dengan migrasi data lama
 - [ ] `POST /devices` pendaftaran dengan MAC — khusus `super_admin`
 - [ ] `GET /devices` — `admin_rs` hanya melihat perangkat rumah sakitnya
-- [ ] `POST /devices/{id}/revoke` mencabut akses perangkat hilang
-- [ ] `POST /devices/{id}/rebind-mac` mengikat MAC baru ke record yang sama bila
+- [ ] `POST /devices/{id}/revoke` mencabut akses perangkat hilang — endpoint ada,
+      tetapi baru mencabut setelah jalur sync memeriksa kredensial perangkat
+- [x] `POST /devices/{id}/rebind-mac` mengikat MAC baru ke record yang sama bila
       papan diganti, dengan alasan dan pencatatan audit
 - [ ] `GET /devices/fleet-status` melaporkan versi model, waktu sinkron terakhir, dan
       sisa daya baterai yang dilaporkan modul INA226
@@ -417,7 +429,7 @@ karena alamatnya tertanam permanen pada chip.
 - [ ] Test: MAC dengan format berbeda menunjuk ke satu record yang sama
 - [ ] Test: MAC yang benar tanpa kredensial sah tetap ditolak
 - [ ] Test: `hospital_id` tidak boleh null pada level database
-- [ ] Test: rebind MAC tercatat di audit beserta nilai lama dan baru
+- [x] Test: rebind MAC tercatat di audit beserta nilai lama dan baru
 - [ ] `alembic downgrade -1 && alembic upgrade head` berjalan bersih
 - [ ] `pytest -q --cov` ≥ 95 %
 

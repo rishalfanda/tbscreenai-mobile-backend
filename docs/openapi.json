@@ -971,6 +971,158 @@
         }
       }
     },
+    "/api/v1/devices/{device_id}/revoke": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Revoke Device",
+        "description": "Mark a lost or compromised unit as revoked.\n\nThe registry side of SECURITY_DESIGN's \"access is cut when the device\nreconnects\". Nothing is enforced yet, because the sync path does not check\ndevice credentials yet; that check is the next part of Task 16, and it is\nwhere a suspended status will turn into a refused request.\n\nThe credential hash is deliberately left alone. When the unit reconnects,\nthe server has to recognise it — by that credential — to tell it that it\nhas been revoked and must wipe its local data. Destroying the hash here\nwould leave the server unable to tell the lost unit from any other\nstranger.",
+        "operationId": "revoke_device_api_v1_devices__device_id__revoke_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "x-tenant-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRevoke"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{device_id}/rebind-mac": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Rebind Device Mac",
+        "description": "Bind a replacement board's MAC to an existing device record.\n\nFor a board swap on a unit that is still in our hands: its history, its\nhospital, and its credential all stay, and only the address changes. The\ncredential lives on the unit's storage, which moves to the new board with\neverything else. A unit that left our hands is revoked instead, which is\nwhy a suspended device cannot be rebound.",
+        "operationId": "rebind_device_mac_api_v1_devices__device_id__rebind_mac_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "x-tenant-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRebind"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sync/push": {
       "post": {
         "tags": [
@@ -1243,6 +1395,29 @@
         "title": "DeviceOut",
         "description": "What a device looks like to anyone reading the registry.\n\n`credential_hash` is absent by construction rather than excluded by a\nfilter. A field that is never declared cannot be leaked by a future\nendpoint that forgets to exclude it."
       },
+      "DeviceRebind": {
+        "properties": {
+          "mac_address": {
+            "type": "string",
+            "title": "Mac Address",
+            "description": "WLAN MAC of the replacement board. Any common spelling is accepted and stored in one canonical form."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "description": "Why the hardware changed, e.g. board replaced after water damage. Describe the device's situation; never include patient data."
+          }
+        },
+        "type": "object",
+        "required": [
+          "mac_address",
+          "reason"
+        ],
+        "title": "DeviceRebind",
+        "description": "Moving a registered unit onto a replacement board.\n\nThe same canonicalisation as registration, so the new address is compared\nwith the rest of the registry in one spelling."
+      },
       "DeviceRegistered": {
         "properties": {
           "id": {
@@ -1292,6 +1467,23 @@
         ],
         "title": "DeviceRegistered",
         "description": "The registration response, and the only time the credential is readable.\n\nOnly the hash is stored, so this value cannot be recovered or re-sent later\n— a lost credential means registering the device again. That is the point:\na secret the server can reissue on demand is a secret the server is holding\nin a form someone else can read too."
+      },
+      "DeviceRevoke": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "description": "Why access is being cut, e.g. unit reported lost. Describe the device's situation; never include patient data."
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "DeviceRevoke",
+        "description": "Cutting off a unit. The reason is required because the trail is only\nuseful if it says why, and \"why\" is the one thing nobody remembers later."
       },
       "DiagnosisCreate": {
         "properties": {

@@ -1,15 +1,23 @@
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from app.models.device import DEVICE_STATUSES, normalise_mac
+from app.models.device import DEVICE_STATUSES, REASON_MAX_LENGTH, normalise_mac
 
 # tenant_id is deliberately absent from DeviceCreate. Which hospital a device
 # belongs to is decided by the server from the caller's token, never by the
 # request body — the same rule patients follow.
 
 _STATUS_PATTERN = f"^({'|'.join(DEVICE_STATUSES)})$"
+
+# Surrounding whitespace is trimmed before the length check, so "   " is an
+# empty reason and refused, not a reason made of spaces.
+Reason = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=REASON_MAX_LENGTH),
+]
 
 
 class DeviceCreate(BaseModel):
@@ -59,3 +67,36 @@ class DeviceRegistered(DeviceOut):
         description="Shown once. Store it on the device now; it cannot be "
         "retrieved again."
     )
+
+
+class DeviceRevoke(BaseModel):
+    """Cutting off a unit. The reason is required because the trail is only
+    useful if it says why, and "why" is the one thing nobody remembers later.
+    """
+
+    reason: Reason = Field(
+        description="Why access is being cut, e.g. unit reported lost. Describe "
+        "the device's situation; never include patient data."
+    )
+
+
+class DeviceRebind(BaseModel):
+    """Moving a registered unit onto a replacement board.
+
+    The same canonicalisation as registration, so the new address is compared
+    with the rest of the registry in one spelling.
+    """
+
+    mac_address: str = Field(
+        description="WLAN MAC of the replacement board. Any common spelling is "
+        "accepted and stored in one canonical form."
+    )
+    reason: Reason = Field(
+        description="Why the hardware changed, e.g. board replaced after water "
+        "damage. Describe the device's situation; never include patient data."
+    )
+
+    @field_validator("mac_address")
+    @classmethod
+    def _canonicalise(cls, raw: str) -> str:
+        return normalise_mac(raw)
