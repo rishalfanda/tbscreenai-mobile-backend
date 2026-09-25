@@ -7,16 +7,17 @@ be forgotten, and the forgetting is invisible until someone needs the record.
 
 The actor cannot be read here directly — authentication happens in a
 dependency, inside the route, after middleware has already started. So
-`get_current_user` leaves the user on `request.state` and this reads it
-afterwards. When authentication failed there is nothing to read, and the row is
-written anyway with an empty actor: a rejected token is exactly the event an
-audit trail exists for.
+`get_current_user` leaves a snapshot of the user on `request.state` and this
+reads it afterwards. When authentication failed there is nothing to read, and
+the row is written anyway with an empty actor: a rejected token is exactly the
+event an audit trail exists for.
 """
 
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from fastapi import FastAPI, Request, Response
 from sqlalchemy.orm import Session
@@ -41,6 +42,24 @@ _ACTIONS = {
     "PATCH": "update",
     "DELETE": "delete",
 }
+
+@dataclass(frozen=True)
+class AuditActor:
+    """Who made the request, as plain values copied while they were readable.
+
+    Not the User row itself. This is read after the route has returned and the
+    request's session has been closed, and a rollback on the way — a refused
+    duplicate, a sync item that conflicts — expires every object in that
+    session. An expired row with no session left cannot be read at all, so
+    the middleware crashed on exactly the requests the trail most needs: the
+    response became a 500 and the row was never written. Plain values survive
+    both the rollback and the closed session.
+    """
+
+    id: uuid.UUID
+    role: str
+    tenant_id: uuid.UUID | None
+
 
 # Path segment to the kind of thing it names.
 _RESOURCES = {
