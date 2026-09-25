@@ -11,10 +11,14 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from tests.test_deidentification import _dirty_xray
 
 VALID_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 VALID_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
-VALID_DICOM = b"\x00" * 128 + b"DICM" + b"\x00" * 64
+# A real, if tiny, DICOM X-ray. The marker alone used to be enough, back when
+# the signature was the only thing read; now the file is parsed and
+# de-identified before it is kept, so a stand-in has to actually be DICOM.
+VALID_DICOM = _dirty_xray()
 
 
 def _infer(client, headers, content: bytes, filename="xray.png", mime="image/png"):

@@ -216,21 +216,28 @@ bukan skalabilitas.
 ---
 
 ### Task 7: Simpan citra & isi `Diagnosis.image_path`
+**Status:** dikerjakan di branch `feat/image-path`, menunggu review. Citra disimpan di
+bawah prefix `tenants/{tenant_id}/images/`, dengan kunci yang dibangun server dari
+rumah sakit pemanggil; klien hanya memegang `image_id`. Byte citra tidak diubah: PNG
+dan JPEG disimpan persis seperti diunggah, DICOM disimpan sebagai salinan
+terde-identifikasi yang data pikselnya identik byte demi byte. Citra yatim dibersihkan
+lewat `python -m scripts.cleanup_orphan_images` (hanya menampilkan tanpa `--delete`),
+setelah masa tenggang tujuh hari; citra yang dirujuk diagnosis tidak pernah disentuh.
 **Deskripsi:** `read_validated_image` sudah memegang bytes-nya — itu fungsi yang tepat
 untuk menyerahkannya ke storage. Sekarang bytes itu dibuang begitu respons terkirim,
 sehingga re-inferensi saat model naik versi mustahil dan audit klinis tidak bisa
 menampilkan citra di samping putusan AI.
 
 **Acceptance criteria:**
-- [ ] `/diagnoses/infer` menyimpan citra dan mengembalikan referensi objeknya
-- [ ] `POST /diagnoses` menerima referensi itu dan mengisi `image_path`
-- [ ] Ada endpoint ambil citra, tunduk pada isolasi tenant yang sama (RS lain → 404)
-- [ ] Citra yatim (di-infer tapi diagnosis tidak pernah disimpan) punya kebijakan pembersihan
+- [x] `/diagnoses/infer` menyimpan citra dan mengembalikan referensi objeknya
+- [x] `POST /diagnoses` menerima referensi itu dan mengisi `image_path`
+- [x] Ada endpoint ambil citra, tunduk pada isolasi tenant yang sama (RS lain → 404)
+- [x] Citra yatim (di-infer tapi diagnosis tidak pernah disimpan) punya kebijakan pembersihan
 
 **Verification:**
-- [ ] Test: infer → simpan → ambil → bytes identik
-- [ ] Test isolasi tenant untuk endpoint ambil citra
-- [ ] `pytest -q --cov` ≥ 95 %
+- [x] Test: infer → simpan → ambil → bytes identik
+- [x] Test isolasi tenant untuk endpoint ambil citra
+- [x] `pytest -q --cov` ≥ 95 %
 
 **Dependencies:** Task 6
 **Files:** `app/api/routes/diagnoses.py`, `app/services/storage.py`, `app/schemas/diagnosis.py`, `tests/test_patients_diagnoses.py`, `tests/test_tenant_isolation.py`
@@ -605,6 +612,16 @@ lokal, penyimpanan aman rahasia, penyimpanan audit lokal, integrasi ke sync engi
 ---
 
 ### Task 21: De-identifikasi PHI sebelum data masuk kolam pelatihan
+**Status:** sebagian, di branch `feat/image-path`. `app/services/deidentify.py`
+menghapus identitas dari berkas DICOM dengan daftar izin (PS3.15 Annex E, Basic
+Profile) sebelum citra pertama disimpan, jadi sebelum apa pun bisa masuk kolam
+pelatihan. Data piksel tidak didekode maupun diubah. Berkas yang menyatakan teks
+tercetak di gambarnya (Burned In Annotation = YES) ditolak. Teruji dengan fuzzing:
+berkas rusak ditolak atau keluar bersih, tidak pernah membawa identitas.
+
+Belum ada: mendeteksi teks tercetak yang tidak dinyatakan berkasnya, membuang metadata
+EXIF (lokasi GPS, waktu, perangkat) dari foto JPEG/PNG, pemetaan pseudonim, flag
+consent, dan ekspor data pelatihan.
 **Deskripsi:** Forum diseminasi merekomendasikan validasi lanjutan hingga 40.000 citra,
 dan citra itu akan datang dari lapangan. Data pasien tidak boleh berpindah ke kolam
 pelatihan dalam bentuk teridentifikasi.
@@ -615,14 +632,14 @@ Yang tepat adalah membuang atribut identitas dan menyimpan pseudonim sebagai pen
 sehingga privasi terjaga tanpa kehilangan ketertelusuran.
 
 **Acceptance criteria:**
-- [ ] Tag PHI pada berkas DICOM dihapus sebelum data masuk kolam pelatihan
+- [x] Tag PHI pada berkas DICOM dihapus sebelum data masuk kolam pelatihan
 - [ ] Pemetaan pseudonim ke identitas asli disimpan terpisah dengan kontrol akses berbeda
 - [ ] Flag consent per pasien menentukan boleh atau tidaknya data dipakai untuk pelatihan
 - [ ] Data tanpa consent tidak pernah masuk kolam pelatihan
 - [ ] Pencabutan consent memicu penghapusan dari kolam pelatihan
 
 **Verification:**
-- [ ] Test: berkas DICOM hasil de-identifikasi tidak lagi memuat tag identitas
+- [x] Test: berkas DICOM hasil de-identifikasi tidak lagi memuat tag identitas
 - [ ] Test: pasien tanpa consent tidak muncul di ekspor data pelatihan
 - [ ] Test: pencabutan consent menghapus data terkait
 

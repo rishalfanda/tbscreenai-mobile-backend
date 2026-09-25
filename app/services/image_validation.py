@@ -33,6 +33,11 @@ _HEADER_BYTES = _DICOM_MAGIC_OFFSET + len(_DICOM_MAGIC)
 SUPPORTED_FORMATS = tuple(name for _, _, name in _SIGNATURES)
 
 
+def detect_format(data: bytes) -> str | None:
+    """Which supported format these bytes are, judged by signature alone."""
+    return _detect_format(data[:_HEADER_BYTES])
+
+
 def _detect_format(header: bytes) -> str | None:
     for signature, offset, name in _SIGNATURES:
         if header[offset : offset + len(signature)] == signature:

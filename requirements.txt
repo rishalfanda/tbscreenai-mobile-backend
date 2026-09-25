@@ -12,6 +12,10 @@ psycopg[binary]~=3.2.9
 # deployment without touching application code.
 boto3~=1.35
 
+# DICOM. Reads uploads and writes their de-identified copies; never decodes
+# pixels, so no image codec is needed alongside it.
+pydicom~=3.0.2
+
 # Config & validation
 pydantic~=2.11.0
 pydantic-settings~=2.10.0

@@ -242,3 +242,91 @@ def make_patient_body(code: str | None = None) -> dict:
         "status": "Suspected",
         "history": ["entri uji"],
     }
+
+
+# --- Object storage --------------------------------------------------------
+# Every test runs against the real ObjectStorage wrapper wired to an in-memory
+# S3, so the wrapper's own error handling is exercised rather than skipped,
+# and no test ever reaches a MinIO that may not be running. The storage job
+# in CI is where the wrapper meets a real server.
+
+from datetime import UTC, datetime, timedelta  # noqa: E402
+from io import BytesIO  # noqa: E402
+from typing import Any  # noqa: E402
+
+from botocore.exceptions import ClientError  # noqa: E402
+
+from app.services.storage import ObjectStorage, get_object_storage  # noqa: E402
+
+
+class InMemoryS3:
+    """Enough of the S3 API for the image path, held in a dict.
+
+    `errors` maps an operation name to the exception it should raise, which
+    is how a test makes storage unreachable for one call and not another.
+    """
+
+    def __init__(self) -> None:
+        self.objects: dict[str, tuple[bytes, datetime]] = {}
+        self.errors: dict[str, Exception] = {}
+
+    def _fail_if_asked(self, operation: str) -> None:
+        if operation in self.errors:
+            raise self.errors[operation]
+
+    @staticmethod
+    def _missing(operation: str, code: str) -> ClientError:
+        return ClientError({"Error": {"Code": code, "Message": code}}, operation)
+
+    def put_object(self, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_asked("put_object")
+        self.objects[kwargs["Key"]] = (kwargs["Body"], datetime.now(UTC))
+        return {}
+
+    def get_object(self, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_asked("get_object")
+        if kwargs["Key"] not in self.objects:
+            raise self._missing("GetObject", "NoSuchKey")
+        return {"Body": BytesIO(self.objects[kwargs["Key"]][0])}
+
+    def head_object(self, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_asked("head_object")
+        if kwargs["Key"] not in self.objects:
+            raise self._missing("HeadObject", "404")
+        return {}
+
+    def delete_object(self, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_asked("delete_object")
+        self.objects.pop(kwargs["Key"], None)
+        return {}
+
+    def get_paginator(self, name: str) -> "InMemoryS3":
+        assert name == "list_objects_v2"
+        return self
+
+    def paginate(self, **kwargs: Any) -> Generator[dict[str, Any], None, None]:
+        # Two objects per page, so a caller that stops at the first page is
+        # caught by any test with more than two images.
+        self._fail_if_asked("list_objects_v2")
+        matching = sorted(k for k in self.objects if k.startswith(kwargs["Prefix"]))
+        for start in range(0, len(matching), 2):
+            yield {
+                "Contents": [
+                    {"Key": key, "LastModified": self.objects[key][1]}
+                    for key in matching[start : start + 2]
+                ]
+            }
+
+    def age(self, key: str, days: int) -> None:
+        """Pretend an object was written `days` ago."""
+        data, written = self.objects[key]
+        self.objects[key] = (data, written - timedelta(days=days))
+
+
+@pytest.fixture(autouse=True)
+def image_store() -> Generator[InMemoryS3, None, None]:
+    s3 = InMemoryS3()
+    storage = ObjectStorage(client=s3, bucket="test-images")
+    app.dependency_overrides[get_object_storage] = lambda: storage
+    yield s3
+    app.dependency_overrides.pop(get_object_storage, None)

@@ -21,7 +21,12 @@ class DiagnosisCreate(BaseModel):
     model_version: str = Field(max_length=50)
     processing_time_ms: int | None = Field(default=None, ge=0)
     findings: Findings
-    image_path: str | None = None
+    # The id /diagnoses/infer returned for the stored image. Not a path: a
+    # path from the client could name another hospital's image, and the image
+    # endpoint would then serve it. The server builds the path from this id
+    # and the caller's own hospital. A client still sending `image_path` has
+    # it ignored, like any other unknown field.
+    image_id: UUID | None = None
     diagnosed_at: datetime | None = None
 
 
@@ -81,3 +86,6 @@ class InferenceResult(BaseModel):
     model_version: str
     findings: Findings
     is_mock: bool = True
+    # Where the uploaded image was kept. Pass it as `image_id` when saving the
+    # diagnosis, so the record and its X-ray stay together.
+    image_id: UUID | None = None
