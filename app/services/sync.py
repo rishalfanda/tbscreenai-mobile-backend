@@ -188,7 +188,10 @@ def apply_push_item(
             tenant_id=tenant_id,
             created_by=user_id,
             findings=diagnosis_data.findings.model_dump(),
-            **diagnosis_data.model_dump(exclude={"findings"}, exclude_none=True),
+            # image_id is left out: an offline tablet has not uploaded its
+            # image yet, and attaching one arrives with resumable upload
+            # (Task 18), not with the record.
+            **diagnosis_data.model_dump(exclude={"findings", "image_id"}, exclude_none=True),
         )
     if item.entity_id is not None:
         # Client pre-assigned the UUID offline — keep it so future updates match.

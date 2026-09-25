@@ -448,7 +448,7 @@
           "diagnoses"
         ],
         "summary": "Infer",
-        "description": "Accepts a chest X-ray image and returns a structured MOCK result.\n\nValidation is by file signature and size, not by the client's declared\ncontent_type — that header is attacker-controlled and previously was the\nonly check. The bytes are not stored yet; storage lands with the real\nmodel integration, at which point this is the function that already holds\nthem.",
+        "description": "Accepts a chest X-ray image, keeps it, and returns a MOCK result.\n\nValidation is by file signature and size, not by the client's declared\ncontent_type — that header is attacker-controlled and previously was the\nonly check.\n\nThe image is stored before the result is returned, so a diagnosis saved\nafterwards can point at it, and so the image can be looked at again when\nthe model changes. A DICOM file is de-identified first; one that cannot\nbe made safe is refused and nothing is kept. When storage is down the\nrequest fails rather than answering without the image, because a result\nwhose X-ray was silently lost cannot be audited later.",
         "operationId": "infer_api_v1_diagnoses_infer_post",
         "security": [
           {
@@ -669,6 +669,73 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/diagnoses/{diagnosis_id}/image": {
+      "get": {
+        "tags": [
+          "diagnoses"
+        ],
+        "summary": "Get Diagnosis Image",
+        "description": "The X-ray a diagnosis was made on, byte for byte as it was stored.\n\nAnother hospital's diagnosis answers 404 like any unknown id. The path\nis also checked against the caller's own prefix before anything is read:\nrows written before image_id existed took their image_path from the\nclient, and one of those must never be able to point this endpoint at\nanother hospital's image. Every read lands in the access trail as a read\nof this diagnosis, which is the \"who opened which image\" record the\nsecurity design asks for.",
+        "operationId": "get_diagnosis_image_api_v1_diagnoses__diagnosis_id__image_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "diagnosis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Diagnosis Id"
+            }
+          },
+          {
+            "name": "x-tenant-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored image, exactly as kept",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "application/dicom": {}
+            }
+          },
+          "404": {
+            "description": "No such diagnosis for this hospital, or it has no image"
           },
           "422": {
             "description": "Validation Error",
@@ -1330,16 +1397,17 @@
           "findings": {
             "$ref": "#/components/schemas/Findings"
           },
-          "image_path": {
+          "image_id": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "uuid"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Image Path"
+            "title": "Image Id"
           },
           "diagnosed_at": {
             "anyOf": [
@@ -1595,6 +1663,18 @@
             "type": "boolean",
             "title": "Is Mock",
             "default": true
+          },
+          "image_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Id"
           }
         },
         "type": "object",

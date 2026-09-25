@@ -14,6 +14,9 @@ failure to an HTTP status without knowing what an S3 client is.
 """
 
 import logging
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from typing import Any
 
@@ -35,6 +38,12 @@ _ALREADY_EXISTS = frozenset({"BucketAlreadyOwnedByYou", "BucketAlreadyExists"})
 _NO_SUCH_KEY = "NoSuchKey"
 
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
+
+
+@dataclass(frozen=True)
+class StoredObject:
+    key: str
+    last_modified: datetime
 
 
 class StorageError(RuntimeError):
@@ -92,10 +101,12 @@ def build_client(settings: Settings) -> Any:
 class ObjectStorage:
     """A narrow door onto one bucket.
 
-    Deliberately not a general S3 wrapper. The four operations below are what
-    the imaging path needs, and keeping the surface small is what makes the
+    Deliberately not a general S3 wrapper. The operations below are what the
+    imaging path needs, and keeping the surface small is what makes the
     "swap MinIO for something else" claim in ADR-001 checkable rather than
-    aspirational.
+    aspirational. `exists` and `list_objects` arrived with Task 7: the first
+    lets a diagnosis refuse an image reference that points at nothing, the
+    second lets the orphan sweep find images no diagnosis ever claimed.
 
     The client is injected rather than built internally so a test can hand in
     a stub, the same way get_db is overridden in the route tests.
@@ -218,6 +229,40 @@ class ObjectStorage:
         except (ClientError, BotoCoreError) as error:
             raise StorageUnavailableError(
                 f"Could not delete object {key!r}: {error}"
+            ) from error
+
+    def exists(self, key: str) -> bool:
+        """Whether an object is stored under key. Unreachable storage raises."""
+        try:
+            self._client.head_object(Bucket=self._bucket, Key=key)
+        except ClientError as error:
+            if _error_code(error) in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise StorageUnavailableError(
+                f"Could not check object {key!r}: {error}"
+            ) from error
+        except BotoCoreError as error:
+            raise StorageUnavailableError(
+                f"Could not reach storage at {self._endpoint()}: {error}"
+            ) from error
+        return True
+
+    def list_objects(self, prefix: str) -> Iterator[StoredObject]:
+        """Every object under prefix, with when it was last written.
+
+        Paged, so a bucket with more objects than one listing returns is read
+        to the end rather than quietly cut at the first thousand.
+        """
+        try:
+            pages = self._client.get_paginator("list_objects_v2").paginate(
+                Bucket=self._bucket, Prefix=prefix
+            )
+            for page in pages:
+                for entry in page.get("Contents", []):
+                    yield StoredObject(key=entry["Key"], last_modified=entry["LastModified"])
+        except (ClientError, BotoCoreError) as error:
+            raise StorageUnavailableError(
+                f"Could not list objects under {prefix!r}: {error}"
             ) from error
 
     def _endpoint(self) -> str:
