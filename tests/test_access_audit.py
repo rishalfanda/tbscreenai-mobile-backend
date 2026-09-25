@@ -1,5 +1,7 @@
 """The access trail: what lands in it, and what deliberately does not."""
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -7,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.models.audit import AccessLog
 from app.models.hospital import Hospital
+from app.models.user import User
+from tests.conftest import make_patient_body
 
 
 def _entries(db: Session) -> list[AccessLog]:
@@ -214,3 +218,79 @@ class TestSuperAdminActionsAreAttributedToTheHospitalTouched:
     ) -> None:
         client.get("/api/v1/patients", headers=headers_a)
         assert _entries(db_session)[-1].tenant_id == hospitals["A"].id
+
+
+class TestARolledBackRequestIsStillRecorded:
+    """A rollback expires every object in the session, the actor included.
+
+    The middleware must not depend on that object still being readable after
+    the request's session is gone: a refused duplicate or a conflicting sync
+    item is precisely the kind of request the trail exists for.
+    """
+
+    def test_a_duplicate_registration_answers_409_and_is_recorded(
+        self,
+        client: TestClient,
+        db_session: Session,
+        hospitals: dict[str, Hospital],
+        headers_super: dict,
+        users: dict[str, User],
+        per_request_sessions: None,
+    ) -> None:
+        headers = {**headers_super, "X-Tenant-Id": str(hospitals["A"].id)}
+        body = {"mac_address": "aa:bb:cc:dd:ee:ff"}
+        assert client.post("/api/v1/devices", headers=headers, json=body).status_code == 201
+
+        duplicate = client.post("/api/v1/devices", headers=headers, json=body)
+
+        assert duplicate.status_code == 409
+        latest = _entries(db_session)[-1]
+        assert latest.status_code == 409
+        assert latest.actor_user_id == users["super"].id
+        assert latest.actor_role == "super_admin"
+        assert latest.tenant_id == hospitals["A"].id
+
+    def test_one_conflicting_sync_item_does_not_sink_the_batch(
+        self,
+        client: TestClient,
+        db_session: Session,
+        hospitals: dict[str, Hospital],
+        headers_a: dict,
+        users: dict[str, User],
+        per_request_sessions: None,
+    ) -> None:
+        # Two tablets offline both used TB000900. That create cannot apply,
+        # and the push rolls the item back. The batch must still answer 200
+        # with a verdict per item: a 500 here loses the verdicts for work the
+        # server already committed, and the tablet can no longer tell which
+        # of its offline records landed.
+        #
+        # The conflict comes last on purpose. An item after it would reload
+        # the expired actor on its way through and hide the crash, so a batch
+        # that ends on a conflict, including a batch of one, is the case that
+        # used to fail.
+        client.post(
+            "/api/v1/patients", headers=headers_a, json=make_patient_body("TB000900")
+        )
+        taken = {
+            "client_op_id": str(uuid.uuid4()),
+            "entity_type": "patient",
+            "operation": "create",
+            "entity_id": str(uuid.uuid4()),
+            "payload": make_patient_body("TB000900"),
+        }
+        fresh = {**taken, "client_op_id": str(uuid.uuid4()),
+                 "entity_id": str(uuid.uuid4()), "payload": make_patient_body("TB000901")}
+
+        response = client.post(
+            "/api/v1/sync/push",
+            headers=headers_a,
+            json={"device_id": "tablet-uji", "items": [fresh, taken]},
+        )
+
+        assert response.status_code == 200
+        verdicts = [result["status"] for result in response.json()["results"]]
+        assert verdicts == ["applied", "conflict"]
+        latest = _entries(db_session)[-1]
+        assert latest.path == "/api/v1/sync/push"
+        assert latest.actor_user_id == users["doctor_a"].id

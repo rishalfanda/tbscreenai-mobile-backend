@@ -15,6 +15,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.audit import AuditActor
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.user import ROLE_ADMIN_RS, ROLE_DOCTOR, ROLE_SUPER_ADMIN, User
@@ -60,7 +61,9 @@ def get_current_user(
     # Left here for the audit middleware, which runs outside the route and so
     # cannot resolve the token itself. Set only after every check has passed,
     # so a rejected request never records an actor it did not really have.
-    request.state.actor = user
+    # A copy, not the row: see AuditActor for why the row does not survive to
+    # the point where the middleware reads it.
+    request.state.actor = AuditActor(id=user.id, role=user.role, tenant_id=user.tenant_id)
     return user
 
 
@@ -102,6 +105,8 @@ def require_roles(*roles: str) -> Callable[[User], User]:
 #   GET    /sync/model-version x       x          x
 #   POST   /devices            -        -         x
 #   GET    /devices            -        x         x
+#   POST   /devices/{id}/revoke -       x         x
+#   POST   /devices/{id}/rebind-mac -   -         x
 #
 # The split is by function, not seniority. Clinical acts — running inference,
 # recording a diagnosis, agreeing or disagreeing with the AI — are the
@@ -109,6 +114,12 @@ def require_roles(*roles: str) -> Callable[[User], User]:
 # make them qualified to sign off a TB reading. Sync belongs to the tablet,
 # which only doctors use. Deleting a patient record is administrative, so it
 # sits with admin_rs and super_admin rather than with the clinician.
+#
+# The two device verbs split by direction. Revoking removes access, which is
+# the safe direction, so the hospital that lost a unit may act at once rather
+# than wait for the centre to answer. Rebinding decides which hardware speaks
+# for a hospital, which is registration's twin, so it stays where registration
+# does.
 
 READ_ROLES = (ROLE_DOCTOR, ROLE_ADMIN_RS, ROLE_SUPER_ADMIN)
 """Anyone authenticated may read within their tenant scope."""
@@ -127,6 +138,12 @@ DEVICE_READ_ROLES = (ROLE_ADMIN_RS, ROLE_SUPER_ADMIN)
 
 DEVICE_REGISTER_ROLES = (ROLE_SUPER_ADMIN,)
 """Issuing a credential that can sync a hospital's data is a central act."""
+
+DEVICE_REVOKE_ROLES = (ROLE_ADMIN_RS, ROLE_SUPER_ADMIN)
+"""Cutting off a lost unit should not wait on anyone outside its hospital."""
+
+DEVICE_REBIND_ROLES = DEVICE_REGISTER_ROLES
+"""Binding new hardware to an identity grants access, like registering does."""
 
 
 def get_tenant_id(
