@@ -283,7 +283,10 @@ hidup. Di aplikasi medis, angka fiktif yang tampak resmi adalah bahaya demo.
 **Dependencies:** Task 9 (endpoint analitik menyusul CRUD)
 
 ### Task 11: Tabel audit akses
-**Status:** sedang ditinjau. Tabel jejak akses, middleware pencatatnya, dan revisi dari review ada di PR #11.
+**Status:** selesai. Tabel jejak akses, middleware pencatatnya, dan revisi dari review
+masuk lewat PR #11, merged 24 September 2026. Perbaikan crash setelah rollback — 500
+pada registrasi perangkat ganda dan pada push sync yang diakhiri item konflik —
+menyusul lewat branch `fix/audit-after-rollback`.
 **Deskripsi:** `sync_logs` mencatat operasi sinkronisasi, bukan siapa membaca atau
 mengubah apa lewat REST. Regulasi rekam medis menuntut jejak itu. `structlog` +
 request-id sudah direkomendasikan ADR-001.

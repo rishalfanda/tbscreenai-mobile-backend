@@ -15,6 +15,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.audit import AuditActor
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.user import ROLE_ADMIN_RS, ROLE_DOCTOR, ROLE_SUPER_ADMIN, User
@@ -60,7 +61,9 @@ def get_current_user(
     # Left here for the audit middleware, which runs outside the route and so
     # cannot resolve the token itself. Set only after every check has passed,
     # so a rejected request never records an actor it did not really have.
-    request.state.actor = user
+    # A copy, not the row: see AuditActor for why the row does not survive to
+    # the point where the middleware reads it.
+    request.state.actor = AuditActor(id=user.id, role=user.role, tenant_id=user.tenant_id)
     return user
 
 

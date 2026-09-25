@@ -110,6 +110,30 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
 
 
 @pytest.fixture
+def per_request_sessions(client: TestClient, db_session: Session) -> None:
+    """One session per request, closed when the request ends, as get_db does.
+
+    The rest of the suite hands every request the same long-lived session, so
+    an object the request loaded stays attached and can quietly reload itself
+    after a rollback. In production the request's session is closed before
+    the audit middleware reads the actor, and that difference is exactly
+    where a rolled-back request used to crash the middleware.
+    """
+    factory = sessionmaker(
+        bind=db_session.get_bind(), autoflush=False, expire_on_commit=False
+    )
+
+    def _one_per_request() -> Generator[Session, None, None]:
+        session = factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _one_per_request
+
+
+@pytest.fixture
 def hospitals(db_session: Session) -> dict[str, Hospital]:
     """Two tenants — the whole point is proving they cannot see each other."""
     rows = {
